@@ -1,0 +1,72 @@
+{
+  "name": "garment-production-erp",
+  "version": "0.1.0",
+  "description": "ThreadFlow offline garment production and billing ERP",
+  "author": "Teli Software",
+  "private": true,
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently \"node electron/api-dev.cjs\" \"vite\"",
+    "build": "tsc && vite build",
+    "desktop": "electron .",
+    "desktop:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "desktop:unpacked": "npm run build && electron-builder --win --dir",
+    "desktop:installer": "npm run build && electron-builder --win nsis"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "concurrently": "latest",
+    "electron": "latest",
+    "electron-builder": "^26.15.3",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "wait-on": "latest"
+  },
+  "build": {
+    "appId": "in.teli.threadflow",
+    "productName": "Teli ThreadFlow Garment",
+    "copyright": "Copyright © 2026 Teli Software",
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.png",
+      "executableName": "Teli ThreadFlow Garment",
+      "legalTrademarks": "Teli Software"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Teli ThreadFlow Garment",
+      "uninstallDisplayName": "Teli ThreadFlow Garment",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
+      "artifactName": "Teli ThreadFlow Garment Setup ${version}.${ext}"
+    }
+  }
+}

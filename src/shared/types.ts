@@ -1,0 +1,13 @@
+export type Employee={id:string;name:string;mobile:string;address:string;joiningDate:string;type:'Staff';status:'Active'|'Inactive'|'Left'};
+export type WorkType={id:string;code?:string;name:string;rate:number;status:'Active'|'Inactive';unit:string};
+export type WorkEntry={id:string;date:string;employeeId:string;workTypeId:string;quantity:number;remarks:string};
+export type AdvanceEntry={id:string;date:string;employeeId:string;amount:number;mode:'Cash'|'UPI'|'Bank';remarks:string};
+export type SalaryPayment={id:string;paidDate:string;employeeId:string;from:string;to:string;recover:number;mode:'Cash'|'UPI'|'Bank';remarks:string;gross:number;openingAdvance:number;advanceDuring:number;pendingAdvance:number;netPayable:number;closingAdvance:number;pieces:number};
+export type AssignmentWork={id:string;workTypeId:string;qty:number;done:number};
+export type Assignment={id:string;date:string;cuttingNo:string;cuttingQty:number;customerId:string;employeeId:string;works:AssignmentWork[];remarks:string};
+export type DressVersion={id:string;year:string;note:string;date:string;boysPhotos:string[];girlsPhotos:string[]};
+export type School={id:string;name:string;contact:string;phone:string;location:string;uniform:string;status:string;logo:string;dressVersions:DressVersion[]};
+export type Student={id?:string;name:string;admission:string;school:string;className:string;section:string;gender:string;sizes:Record<string,string>};
+export type Invoice={invoiceNo:string;invoiceDate:string;dueDate:string;state:string;reverseCharge:string;customer:string;customerPhone:string;customerGst:string;customerAddress:string;shipTo:string;shipAddress:string;shipGst:string;product:string;hsn:string;qty:number;unit:string;rate:number;cgst:number;sgst:number;taxableAmount:number;totalAmount:number;status:'Pending'|'Partially Paid'|'Paid'|'Overdue';terms:string};
+export type InvoicePayment={id:string;date:string;invoiceNo:string;customer:string;mode:string;amount:number;reference:string;remarks:string};
+export type DeliveryChallan={challanNo:string;date:string;customer:string;phone:string;address:string;gst:string;vehicle:string;driver:string;deliveryMode:string;product:string;qty:number;unit:string;remarks:string;status:'Ready'|'Delivered'|'Cancelled'};
