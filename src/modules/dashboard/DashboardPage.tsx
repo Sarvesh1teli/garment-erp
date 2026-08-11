@@ -1,5 +1,5 @@
 import { AlertTriangle, PackageCheck, Scissors, Users, WalletCards } from 'lucide-react';
-import { Table, Title, Stats } from '../../shared/ui';
+import { Table, Stats } from '../../shared/ui';
 import { money, workTypeCode } from '../../shared/utils';
 import { defaultWorkTypes } from '../../shared/defaults';
 import type { AdvanceEntry, Assignment, Employee, WorkEntry, WorkType } from '../../shared/types';
@@ -22,11 +22,9 @@ export function DashboardPage({employees,workTypes,advances,workEntries,assignme
   const stageData=workTypes.filter(wt=>wt.status==='Active').map(wt=>{const assigned=assignments.reduce((s,a)=>s+a.works.filter(w=>w.workTypeId===wt.id).reduce((x,w)=>x+w.qty,0),0);const done=assignments.reduce((s,a)=>s+a.works.filter(w=>w.workTypeId===wt.id).reduce((x,w)=>x+Math.min(w.done,w.qty),0),0);return {name:workTypeName(workTypes,wt.id),assigned,done}}).filter(x=>x.assigned>0);
   const jobs=activeAssignments.slice(0,6).map(a=>[a.id,a.cuttingNo,customerName(customers,a.customerId),nameOf(employees,a.employeeId),a.works.map(w=>workTypeName(workTypes,w.workTypeId)).join(', '),`${workDone(a)}/${workTotal(a)}`,statusOf(a)]);
   const completion=totalAssigned?Math.round(totalDone/totalAssigned*100):0;
-  const hour=new Date().getHours();
-  const greeting=hour<12?'Good morning':hour<17?'Good afternoon':'Good evening';
   const today=new Date().toISOString().slice(0,10);
   const todayEntries=workEntries.filter(w=>w.date===today);
-  return <section className="content dashboard-page"><Title title={`${greeting}, Arun`} copy="Here's what's happening on your production floor today."/>
+  return <section className="content dashboard-page">
     <Stats values={[['Active Assignments',String(activeAssignments.length),`${completedAssignments.length} completed`],['Pieces Assigned',String(totalAssigned),'across all cuttings'],['Pieces Completed',String(totalDone),`${completion}% of assigned`],['Wage Value',money(workAmount),`${todayEntries.length} entries today`]]}/>
     <div className="grid">
       <article className="card production"><div className="cardhead"><div><h2>Production overview</h2><p>Assigned vs completed pieces by work type</p></div></div><div className="stageTotal"><div><small>TOTAL IN PRODUCTION</small><strong>{totalAssigned}<em> pieces</em></strong></div><span>{completion}% done</span></div><div className="stages">{stageData.map(s=><div key={s.name}><div className="stageLabel"><span>{s.name}</span><strong>{s.done} / {s.assigned}</strong></div><div className="bar"><i style={{width:`${s.assigned?Math.round(s.done/s.assigned*100):0}%`}}/></div></div>)}</div></article>

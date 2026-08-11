@@ -40,7 +40,7 @@ ipcMain.handle('save-pdf', async (event) => {
     filters: [{ name: 'PDF', extensions: ['pdf'] }],
   });
   if (canceled || !filePath) return { saved: false };
-  const data = await win.webContents.printToPDF({ printBackground: true, pageSize: 'A4' });
+  const data = await win.webContents.printToPDF({ printBackground: true, pageSize: 'A4', preferCSSPageSize: true, scale: 1, printHeaderFooter: false });
   fs.writeFileSync(filePath, data);
   return { saved: true, filePath };
 });
@@ -52,7 +52,7 @@ if (hasLock) {
     mainWindow.focus();
   });
   app.whenReady().then(async () => {
-    app.setAppUserModelId('in.teli.threadflow');
+    if (app.isPackaged) app.setAppUserModelId('in.teli.threadflow');
     try {
       await startLocalApi({ dataDirectory: app.getPath('userData') });
       createWindow();

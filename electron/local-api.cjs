@@ -364,6 +364,16 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     driver:"TEXT NOT NULL DEFAULT ''", delivery_mode:"TEXT NOT NULL DEFAULT ''", quantity:'REAL NOT NULL DEFAULT 0', unit:"TEXT NOT NULL DEFAULT ''", quantity_text:"TEXT NOT NULL DEFAULT ''",
     remarks:"TEXT NOT NULL DEFAULT ''",
   })) ensureColumn('delivery_challans', column, definition);
+  ensureColumn('ready_school_stock', 'date', "TEXT NOT NULL DEFAULT ''");
+  database.exec(`UPDATE ready_school_stock SET date = substr(created_at, 1, 10) WHERE date = ''`);
+  const nextReadyStockId = () => {
+    const { m } = database.prepare("SELECT COALESCE(MAX(CAST(SUBSTR(id, 4) AS INTEGER)), 0) AS m FROM ready_school_stock WHERE id GLOB 'RS-[0-9]*'").get();
+    return `RS-${String(Number(m) + 1).padStart(4, '0')}`;
+  };
+  const renameReadyStockId = database.prepare('UPDATE ready_school_stock SET id = ? WHERE id = ?');
+  for (const legacy of database.prepare("SELECT id FROM ready_school_stock WHERE id NOT GLOB 'RS-[0-9]*' ORDER BY rowid").all()) {
+    renameReadyStockId.run(nextReadyStockId(), legacy.id);
+  }
 
   const findState = database.prepare(
     'SELECT payload_json, version, updated_at FROM app_state WHERE resource_key = ?'
@@ -381,13 +391,13 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
   const insertMedia = database.prepare('INSERT INTO media_assets (id, school_id, category, original_filename, relative_path, mime_type, file_size, sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
   const deleteMedia = database.prepare('DELETE FROM media_assets WHERE id = ?');
 
-  const listReadyStock = database.prepare('SELECT id, school_id, class_name, gender, garment, size, quantity, remarks FROM ready_school_stock ORDER BY rowid');
-  const findReadyStock = database.prepare('SELECT id, school_id, class_name, gender, garment, size, quantity, remarks FROM ready_school_stock WHERE id = ?');
-  const insertReadyStock = database.prepare('INSERT INTO ready_school_stock (id, school_id, class_name, gender, garment, size, quantity, remarks) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-  const updateReadyStock = database.prepare('UPDATE ready_school_stock SET school_id=?, class_name=?, gender=?, garment=?, size=?, quantity=?, remarks=?, updated_at=CURRENT_TIMESTAMP WHERE id=?');
+  const listReadyStock = database.prepare('SELECT id, school_id, class_name, gender, garment, size, quantity, remarks, date FROM ready_school_stock ORDER BY rowid');
+  const findReadyStock = database.prepare('SELECT id, school_id, class_name, gender, garment, size, quantity, remarks, date FROM ready_school_stock WHERE id = ?');
+  const insertReadyStock = database.prepare('INSERT INTO ready_school_stock (id, school_id, class_name, gender, garment, size, quantity, remarks, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const updateReadyStock = database.prepare('UPDATE ready_school_stock SET school_id=?, class_name=?, gender=?, garment=?, size=?, quantity=?, remarks=?, date=?, updated_at=CURRENT_TIMESTAMP WHERE id=?');
   const deleteReadyStock = database.prepare('DELETE FROM ready_school_stock WHERE id = ?');
-  const readyStockJsonToParams = value => [String(value.school || ''), String(value.className || ''), String(value.gender || ''), String(value.garment || ''), String(value.size || ''), numericValue(value.count), String(value.remarks || '')];
-  const readyStockRowToJson = row => ({ id: row.id, school: row.school_id, className: row.class_name, gender: row.gender, garment: row.garment, size: row.size, count: Number(row.quantity), remarks: row.remarks });
+  const readyStockJsonToParams = value => [String(value.school || ''), String(value.className || ''), String(value.gender || ''), String(value.garment || ''), String(value.size || ''), numericValue(value.count), String(value.remarks || ''), String(value.date || '')];
+  const readyStockRowToJson = row => ({ id: row.id, school: row.school_id, className: row.class_name, gender: row.gender, garment: row.garment, size: row.size, count: Number(row.quantity), remarks: row.remarks, date: row.date });
   function validateReadyStock(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid ready stock payload');
     if (!String(value.school || '').trim()) throw new Error('School is required');
@@ -405,7 +415,7 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
         try {
           for (const row of JSON.parse(legacy.payload_json)) {
             if (!row || !row.school || !row.className || !row.garment || !row.size) continue;
-            insertReadyStock.run(crypto.randomUUID(), String(row.school), String(row.className), String(row.gender || ''), String(row.garment), String(row.size), numericValue(row.count), String(row.remarks || ''));
+            insertReadyStock.run(nextReadyStockId(), String(row.school), String(row.className), String(row.gender || ''), String(row.garment), String(row.size), numericValue(row.count), String(row.remarks || ''), String(row.date || new Date().toISOString().slice(0, 10)));
           }
           deleteState.run('garment-ready-stock');
           database.exec('COMMIT');
@@ -617,6 +627,8 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
   const findUserByUsername = (username) => findUserByEmail.get(String(username || '').trim());
   const authenticateUser = (user, password) => { if (!user || !user.active) return false; const actual = Buffer.from(passwordHash(String(password || ''), user.password_salt), 'hex'); const expected = Buffer.from(user.password_hash, 'hex'); return actual.length === expected.length && crypto.timingSafeEqual(actual, expected); };
   const ensureMasterUser = () => { if (!findUserByUsername(MASTER_USERNAME)) { const salt = crypto.randomBytes(16).toString('hex'); insertUser.run(crypto.randomUUID(), 'Master', MASTER_USERNAME, salt, passwordHash(MASTER_PASSWORD, salt), 'Master'); } };
+  const findOwnerUser = () => database.prepare('SELECT id FROM app_users WHERE role = ? LIMIT 1').get('Owner');
+  const ensureOwnerUser = () => { if (!findOwnerUser()) { const salt = crypto.randomBytes(16).toString('hex'); insertUser.run(crypto.randomUUID(), 'Admin', 'admin', salt, passwordHash(COMMON_CUSTOMER_PASSWORD, salt), 'Owner'); } };
 
   const subscriptionView = () => {
     const row=findSubscription.get();
@@ -638,10 +650,10 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     if(!datePattern.test(fromDate)||!datePattern.test(toDate))throw new Error('From date and to date are required');
     const startsAt=new Date(`${fromDate}T00:00:00.000Z`);const endsAt=new Date(`${toDate}T23:59:59.999Z`);
     if(Number.isNaN(startsAt.getTime())||Number.isNaN(endsAt.getTime())||startsAt.getTime()>endsAt.getTime())throw new Error('To date must be on or after from date');
-    const users=Number(countUsers.get().count);
+    const owner = findOwnerUser();
     database.exec('BEGIN IMMEDIATE');
     try{
-      if(!users){const name=String(value?.ownerName||'Admin').trim();const email=String(value?.email||'admin').trim().toLowerCase();if(!name||(!email.includes('@')&&email!=='admin'))throw new Error('Use the default admin username or enter a valid owner email');const salt=crypto.randomBytes(16).toString('hex');insertUser.run(crypto.randomUUID(),name,email,salt,passwordHash(COMMON_CUSTOMER_PASSWORD,salt),'Owner')}
+      if(!owner){const name=String(value?.ownerName||'Admin').trim();const email=String(value?.email||'admin').trim().toLowerCase();if(!name||(!email.includes('@')&&email!=='admin'))throw new Error('Use the default admin username or enter a valid owner email');const salt=crypto.randomBytes(16).toString('hex');insertUser.run(crypto.randomUUID(),name,email,salt,passwordHash(COMMON_CUSTOMER_PASSWORD,salt),'Owner')}
       saveSubscription.run(activationMode==='license'?licenseKey:'PASSWORD-ACTIVATED',planName,startsAt.toISOString(),endsAt.toISOString());database.exec('COMMIT');return subscriptionView();
     }catch(error){database.exec('ROLLBACK');throw error}
   }
@@ -893,6 +905,7 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
   }
 
   ensureMasterUser();
+  ensureOwnerUser();
   const server = http.createServer(async (request, response) => {
     if (request.method === 'OPTIONS') return json(response, 204, null);
     const url = new URL(request.url || '/', `http://${request.headers.host || '127.0.0.1'}`);
@@ -974,7 +987,7 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     }
 
     const readyStockBase = url.pathname === '/api/ready-school-stock';
-    const readyStockIdMatch = url.pathname.match(/^\/api\/ready-school-stock\/([0-9a-f-]+)$/i);
+    const readyStockIdMatch = url.pathname.match(/^\/api\/ready-school-stock\/([A-Za-z0-9-]+)$/);
     if (readyStockBase || readyStockIdMatch) {
       if (readyStockBase) {
         if (request.method === 'GET') {
@@ -984,7 +997,7 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
         if (request.method === 'POST') {
           try {
             const value = validateReadyStock(await readJson(request));
-            const id = crypto.randomUUID();
+            const id = nextReadyStockId();
             insertReadyStock.run(id, ...readyStockJsonToParams(value));
             return json(response, 201, { data: readyStockRowToJson(findReadyStock.get(id)) });
           } catch (error) {

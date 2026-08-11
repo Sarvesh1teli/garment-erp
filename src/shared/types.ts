@@ -11,3 +11,6 @@ export type Student={id?:string;name:string;admission:string;school:string;class
 export type Invoice={invoiceNo:string;invoiceDate:string;dueDate:string;state:string;reverseCharge:string;customer:string;customerPhone:string;customerGst:string;customerAddress:string;shipTo:string;shipAddress:string;shipGst:string;product:string;hsn:string;qty:number;unit:string;rate:number;cgst:number;sgst:number;taxableAmount:number;totalAmount:number;status:'Pending'|'Partially Paid'|'Paid'|'Overdue';terms:string};
 export type InvoicePayment={id:string;date:string;invoiceNo:string;customer:string;mode:string;amount:number;reference:string;remarks:string};
 export type DeliveryChallan={challanNo:string;date:string;customer:string;phone:string;address:string;gst:string;vehicle:string;driver:string;deliveryMode:string;product:string;qty:number;unit:string;remarks:string;status:'Ready'|'Delivered'|'Cancelled'};
+export type SchoolStock={id:string;date:string;school:string;className:string;gender:string;garment:string;size:string;count:number;remarks:string};
+export type CustomerStock={id:string;date:string;customer:string;garment:string;size:string;count:number;remarks:string};
+export type StockSale={id:string;date:string;type:'School'|'Customer';party:string;gender?:string;garment:string;size:string;count:number;rate:number;total:number;invoiceNo:string;remarks:string};

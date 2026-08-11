@@ -30,7 +30,7 @@ export function ExpensesPage(){
   const addExpense=()=>{if(expenseForm.amount<=0||!expenseForm.type)return;setExpenses(current=>[[`EXP-${String(current.length+1001)}`,expenseForm.vendor||expenseForm.paidTo||'-',expenseForm.year,expenseForm.type,expenseForm.description||'-',expenseForm.date,money(expenseForm.amount),expenseForm.mode,expenseForm.bill||'-'],...current]);setExpenseForm({...expenseForm,amount:0,description:'',bill:'',paidTo:''});setShowExpenseForm(false)};
   const categoryOptions=categories.map(category=><option key={category[0]} value={category[1]}>{category[1]}</option>);
 
-  return <section className="content"><div className="wage-heading">Expenses</div>
+  return <section className="content">
     <div className="measurement-tabs wage-tabs">
       <button className={tab==='vendors'?'active':''} onClick={()=>setTab('vendors')}><Users size={16}/><span>Vendor List<small>{vendors.length} vendors</small></span></button>
       <button className={tab==='expenses'?'active':''} onClick={()=>setTab('expenses')}><WalletCards size={16}/><span>Expenses<small>{expenses.length} entries</small></span></button>
