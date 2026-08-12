@@ -83,10 +83,10 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
       class_name TEXT NOT NULL,
       section TEXT NOT NULL,
       gender TEXT NOT NULL,
+      year TEXT NOT NULL DEFAULT '',
       sizes_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE (school, admission)
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS employees (
       id TEXT PRIMARY KEY,
@@ -365,6 +365,33 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     remarks:"TEXT NOT NULL DEFAULT ''",
   })) ensureColumn('delivery_challans', column, definition);
   ensureColumn('ready_school_stock', 'date', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('students', 'year', "TEXT NOT NULL DEFAULT ''");
+  const studentIndexes = database.prepare("PRAGMA index_list('students')").all();
+  if (studentIndexes.some(index => index.name === 'sqlite_autoindex_students_2')) {
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      database.exec('ALTER TABLE students RENAME TO students_legacy');
+      database.exec(`CREATE TABLE students (
+        id TEXT PRIMARY KEY,
+        admission TEXT NOT NULL DEFAULT '',
+        name TEXT NOT NULL,
+        school TEXT NOT NULL,
+        class_name TEXT NOT NULL,
+        section TEXT NOT NULL,
+        gender TEXT NOT NULL,
+        year TEXT NOT NULL DEFAULT '',
+        sizes_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`);
+      database.exec('INSERT INTO students (id, admission, name, school, class_name, section, gender, year, sizes_json, created_at, updated_at) SELECT id, admission, name, school, class_name, section, gender, year, sizes_json, created_at, updated_at FROM students_legacy');
+      database.exec('DROP TABLE students_legacy');
+      database.exec('COMMIT');
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
+    }
+  }
   database.exec(`UPDATE ready_school_stock SET date = substr(created_at, 1, 10) WHERE date = ''`);
   const nextReadyStockId = () => {
     const { m } = database.prepare("SELECT COALESCE(MAX(CAST(SUBSTR(id, 4) AS INTEGER)), 0) AS m FROM ready_school_stock WHERE id GLOB 'RS-[0-9]*'").get();
@@ -429,12 +456,12 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     return rows.map(readyStockRowToJson);
   }
 
-  const findStudent = database.prepare('SELECT id, admission, name, school, class_name, section, gender, sizes_json FROM students WHERE id = ?');
-  const insertStudent = database.prepare('INSERT INTO students (id, admission, name, school, class_name, section, gender, sizes_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-  const updateStudent = database.prepare('UPDATE students SET id=?, admission=?, name=?, school=?, class_name=?, section=?, gender=?, sizes_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?');
+  const findStudent = database.prepare('SELECT id, admission, name, school, class_name, section, gender, year, sizes_json FROM students WHERE id = ?');
+  const insertStudent = database.prepare('INSERT INTO students (id, admission, name, school, class_name, section, gender, year, sizes_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const updateStudent = database.prepare('UPDATE students SET id=?, admission=?, name=?, school=?, class_name=?, section=?, gender=?, year=?, sizes_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?');
   const deleteStudent = database.prepare('DELETE FROM students WHERE id = ?');
-  const studentJsonToParams = value => [String(value.id || `${String(value.school || '')}:${String(value.admission || '')}`), String(value.admission || ''), String(value.name || '').trim(), String(value.school || ''), String(value.className || ''), String(value.section || ''), String(value.gender || ''), JSON.stringify(value.sizes || {})];
-  const studentRowToJson = row => ({ id: row.id, name: row.name, admission: row.admission, school: row.school, className: row.class_name, section: row.section, gender: row.gender, sizes: JSON.parse(row.sizes_json) });
+  const studentJsonToParams = value => [String(value.id || `${String(value.school || '')}:${String(value.admission || '')}`), String(value.admission || ''), String(value.name || '').trim(), String(value.school || ''), String(value.className || ''), String(value.section || ''), String(value.gender || ''), String(value.year || ''), JSON.stringify(value.sizes || {})];
+  const studentRowToJson = row => ({ id: row.id, name: row.name, admission: row.admission, school: row.school, className: row.class_name, section: row.section, gender: row.gender, year: row.year || '', sizes: JSON.parse(row.sizes_json) });
   function validateStudent(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid student payload');
     if (!String(value.name || '').trim()) throw new Error('Student name is required');
@@ -723,11 +750,11 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     },
     students: {
       legacyKey: 'garment-students',
-      select: database.prepare('SELECT id, admission, name, school, class_name, section, gender, sizes_json FROM students ORDER BY rowid'),
+      select: database.prepare('SELECT id, admission, name, school, class_name, section, gender, year, sizes_json FROM students ORDER BY rowid'),
       clear: database.prepare('DELETE FROM students'),
-      insert: database.prepare('INSERT INTO students (id, admission, name, school, class_name, section, gender, sizes_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'),
-      fromRows: rows => rows.map(row => ({ id: row.id, name: row.name, admission: row.admission, school: row.school, className: row.class_name, section: row.section, gender: row.gender, sizes: JSON.parse(row.sizes_json) })),
-      insertRow: row => [row.id || `${row.school}:${row.admission}`, row.admission, row.name, row.school, row.className, row.section, row.gender, JSON.stringify(row.sizes || {})],
+      insert: database.prepare('INSERT INTO students (id, admission, name, school, class_name, section, gender, year, sizes_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
+      fromRows: rows => rows.map(row => ({ id: row.id, name: row.name, admission: row.admission, school: row.school, className: row.class_name, section: row.section, gender: row.gender, year: row.year || '', sizes: JSON.parse(row.sizes_json) })),
+      insertRow: row => [row.id || `${row.school}:${row.admission}`, row.admission, row.name, row.school, row.className, row.section, row.gender, row.year || '', JSON.stringify(row.sizes || {})],
     },
     employees: {
       legacyKey: 'garment-employees',
@@ -907,7 +934,8 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
   ensureMasterUser();
   ensureOwnerUser();
   const server = http.createServer(async (request, response) => {
-    if (request.method === 'OPTIONS') return json(response, 204, null);
+    try {
+      if (request.method === 'OPTIONS') return json(response, 204, null);
     const url = new URL(request.url || '/', `http://${request.headers.host || '127.0.0.1'}`);
     if (url.pathname === '/api/health' && request.method === 'GET') {
       return json(response, 200, { status: 'ok', database: 'sqlite' });
@@ -1068,7 +1096,7 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
         try {
           const value = validateStudent(await readJson(request));
           const params = studentJsonToParams(value);
-          try { updateStudent.run(params[0], params[1], params[2], params[3], params[4], params[5], params[6], params[7], decodedId); }
+          try { updateStudent.run(params[0], params[1], params[2], params[3], params[4], params[5], params[6], params[7], params[8], decodedId); }
           catch (error) {
             if (String(error.message).includes('UNIQUE')) return json(response, 409, { message: 'A student already exists for this school and admission number' });
             throw error;
@@ -1136,6 +1164,10 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     }
 
     return json(response, 405, { message: 'Method not allowed' });
+    } catch (error) {
+      console.error(error);
+      if (!response.headersSent) return json(response, 500, { message: error.message || 'Internal server error' });
+    }
   });
 
   return new Promise((resolve, reject) => {

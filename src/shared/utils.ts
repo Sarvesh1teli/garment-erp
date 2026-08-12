@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 import type { WorkType } from './types';
 
 export const money=(value:number)=>`Rs. ${value.toLocaleString('en-IN')}`;
@@ -29,6 +30,13 @@ const DOMAIN_ENDPOINTS:Record<string,string>={
 const stateEndpoint=(key:string)=>DOMAIN_ENDPOINTS[key]
   ?`${API_BASE_URL}/api/${DOMAIN_ENDPOINTS[key]}`
   :`${API_BASE_URL}/api/state/${encodeURIComponent(key)}`;
+const stateCache=new Map<string,unknown>();
+const stateListeners=new Map<string,Set<(value:unknown)=>void>>();
+
+function publishState<T>(key:string,value:T){
+  stateCache.set(key,value);
+  stateListeners.get(key)?.forEach(listener=>listener(value));
+}
 
 async function saveState<T>(key:string,value:T){
   const response=await fetch(stateEndpoint(key),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(value)});
@@ -36,32 +44,54 @@ async function saveState<T>(key:string,value:T){
 }
 
 export function useStoredState<T>(key:string,initialValue:T){
-  const [value,setValue]=useState<T>(initialValue);
-  const hydrated=useRef(false);
+  const [value,setValue]=useState<T>(()=>stateCache.has(key)?stateCache.get(key) as T:initialValue);
   const latest=useRef(value);
+  const changedLocally=useRef(false);
   latest.current=value;
+
+  useEffect(()=>{
+    const listener=(next:unknown)=>{
+      latest.current=next as T;
+      setValue(next as T);
+    };
+    const listeners=stateListeners.get(key)??new Set();
+    listeners.add(listener);
+    stateListeners.set(key,listeners);
+    return()=>{
+      listeners.delete(listener);
+      if(!listeners.size)stateListeners.delete(key);
+    };
+  },[key]);
 
   useEffect(()=>{
     let active=true;
     fetch(stateEndpoint(key))
       .then(async response=>{
-        if(response.status===404){await saveState(key,initialValue);return initialValue;}
+        if(response.status===404)return initialValue;
         if(!response.ok)throw new Error(`Unable to load ${key}`);
         const body=await response.json() as {data:T};
         return body.data;
       })
-      .then(data=>{if(active){setValue(data);hydrated.current=true;}})
-      .catch(error=>{console.error(error);if(active)hydrated.current=true;});
+      .then(data=>{
+        if(!active)return;
+        // Never let a slower startup response overwrite a change the user
+        // made while hydration was still in progress.
+        if(!changedLocally.current)publishState(key,data);
+      })
+      .catch(console.error);
     return()=>{active=false};
   },[key]);
 
-  useEffect(()=>{
-    if(!hydrated.current)return;
-    const timeout=window.setTimeout(()=>saveState(key,latest.current).catch(console.error),150);
-    return()=>window.clearTimeout(timeout);
-  },[key,value]);
+  const updateValue=useCallback<Dispatch<SetStateAction<T>>>(update=>{
+    changedLocally.current=true;
+    const next=typeof update==='function'?(update as (current:T)=>T)(latest.current):update;
+    latest.current=next;
+    publishState(key,next);
+    const onError=(error:unknown)=>{console.error(error);window.alert(error instanceof Error?error.message:`Unable to save ${key}. Your latest changes were not stored.`)};
+    saveState(key,next).catch(onError);
+  },[key]);
 
-  return [value,setValue] as const;
+  return [value,updateValue] as const;
 }
 export const workTypeCode=(workType:WorkType)=>workType.code||String(Number(workType.id.replace(/\D/g,''))||'');
 export const inRange=(date:string,from:string,to:string)=>date>=from&&date<=to;

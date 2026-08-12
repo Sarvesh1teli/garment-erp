@@ -41,7 +41,7 @@ export function ReportsPage({employees,workTypes,advances,workEntries,assignment
   const invoiceIncome=visibleIncome.filter(i=>i.type==='Tax Invoice').reduce((a,b)=>a+b.amount,0);
   const customerStitchingIncome=visibleIncome.filter(i=>i.type==='Customer Stitching Income').reduce((a,b)=>a+b.amount,0);
   const staffExpense=visibleExpenses.filter(e=>e.type==='Staff Salary').reduce((a,b)=>a+b.amount,0);
-  const vendorExpense=visibleExpenses.filter(e=>e.type==='Vendor Expense').reduce((a,b)=>a+b.amount,0);
+  const vendorExpense=visibleExpenses.filter(e=>e.type!=='Staff Salary').reduce((a,b)=>a+b.amount,0);
   const incomeAggregates=Object.values(visibleIncome.reduce((acc,row)=>{acc[row.type]=acc[row.type]||{type:row.type,amount:0};acc[row.type].amount+=row.amount;return acc},{} as Record<string,{type:string;amount:number}>));
   const expenseAggregates=Object.values(visibleExpenses.reduce((acc,row)=>{acc[row.type]=acc[row.type]||{type:row.type,amount:0};acc[row.type].amount+=row.amount;return acc},{} as Record<string,{type:string;amount:number}>));
   const clearFilters=()=>{const now=new Date();setIncomeType('All');setExpenseType('All');setMode('All');setFrom(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`);setTo(now.toISOString().slice(0,10))};

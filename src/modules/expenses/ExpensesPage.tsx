@@ -4,13 +4,13 @@ import { Table } from '../../shared/ui';
 import { money, useStoredState } from '../../shared/utils';
 
 type ExpenseTab='vendors'|'expenses'|'categories';
-type VendorRow=[string,string,string,string,string,string];
-type ExpenseRow=[string,string,string,string,string,string,string,string,string];
-type CategoryRow=[string,string,string];
+export type VendorRow=[string,string,string,string,string,string];
+export type ExpenseRow=[string,string,string,string,string,string,string,string,string];
+export type CategoryRow=[string,string,string];
 
-const defaultVendors:VendorRow[]=[];
-const defaultExpenses:ExpenseRow[]=[];
-const defaultCategories:CategoryRow[]=[];
+export const defaultVendors:VendorRow[]=[];
+export const defaultExpenses:ExpenseRow[]=[];
+export const defaultCategories:CategoryRow[]=[['CAT-001','Material Purchase','Fabric and garment materials'],['CAT-002','Accessories Purchase','Buttons, zip, thread and accessories'],['CAT-003','Staff Refreshments','Tea, snacks and staff refreshments'],['CAT-004','Transport / Diesel','Delivery fuel and transport charges'],['CAT-005','Electricity','Electricity and utility charges'],['CAT-006','Shop Rent','Shop, office or factory rent'],['CAT-007','Repairs & Maintenance','Machine and premises maintenance'],['CAT-008','Office Expenses','Printing, stationery and administration'],['CAT-009','Other Expense','Other business expenses']];
 
 export function ExpensesPage(){
   const [tab,setTab]=useState<ExpenseTab>('vendors');
@@ -18,6 +18,7 @@ export function ExpensesPage(){
   const [vendors,setVendors]=useStoredState<VendorRow[]>('garment-expense-vendors',defaultVendors);
   const [expenses,setExpenses]=useStoredState<ExpenseRow[]>('garment-expenses',defaultExpenses);
   const [categories,setCategories]=useStoredState<CategoryRow[]>('garment-expense-categories',defaultCategories);
+  useEffect(()=>{if(!categories.length)setCategories(defaultCategories)},[categories.length,setCategories]);
   const [vendorForm,setVendorForm]=useState({name:'',type:'Dress Supply',contact:'',phone:'',gst:''});
   const [categoryForm,setCategoryForm]=useState({code:'',name:'',description:''});
   const [expenseForm,setExpenseForm]=useState({vendor:'',paidTo:'',year:(()=>{const now=new Date();const y=now.getFullYear();return `${y}-${String((y+1)%100).padStart(2,'0')}`})(),type:categories[0]?.[1]||'',description:'',date:new Date().toISOString().slice(0,10),amount:0,mode:'Cash',bill:''});
