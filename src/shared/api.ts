@@ -45,9 +45,31 @@ async function backupRequest(path='',options?:RequestInit){
   return body.data;
 }
 
-export const listBackups=()=>backupRequest() as Promise<BackupManifest[]>;
+export const listBackups=()=>backupRequest() as Promise<{items:BackupManifest[];directory:string}>;
 export const createBackup=()=>backupRequest('',{method:'POST'}) as Promise<BackupManifest>;
 export const restoreBackup=(id:string)=>backupRequest(`/${encodeURIComponent(id)}/restore`,{method:'POST'});
+
+export const importBackup=async(file:File)=>{
+  const response=await fetch(`${API_BASE_URL}/api/backups/import`,{method:'POST',body:file});
+  const body=await response.json() as {data?:BackupManifest;message?:string};
+  if(!response.ok||!body.data)throw new Error(body.message||'Backup import failed');
+  return body.data;
+};
+
+export const downloadBackup=async(id:string)=>{
+  const response=await fetch(`${API_BASE_URL}/api/backups/${encodeURIComponent(id)}/download`);
+  if(!response.ok){let message='Backup download failed';try{message=(await response.json()).message||message}catch{}throw new Error(message)}
+  const blob=await response.blob();
+  const url=URL.createObjectURL(blob);
+  const anchor=document.createElement('a');
+  anchor.href=url;
+  anchor.download=`ThreadFlow-backup-${id}.zip`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  return true;
+};
 
 export type SubscriptionInfo={planName:string;fromDate:string;toDate:string;status:'Active'|'Expired'|'Not Started';licenseHint:string};
 export type BootstrapInfo={subscription:SubscriptionInfo|null;hasUser:boolean};

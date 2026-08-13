@@ -1,6 +1,6 @@
 import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
-import { Building2, Boxes, CreditCard, DatabaseBackup, RotateCcw, Save, Settings } from 'lucide-react';
-import { activateSubscription, createBackup, getSubscription, listBackups, restoreBackup, type BackupManifest, type SubscriptionInfo } from '../../shared/api';
+import { Building2, Boxes, CreditCard, DatabaseBackup, Download, RotateCcw, Save, Settings } from 'lucide-react';
+import { activateSubscription, createBackup, downloadBackup, getSubscription, importBackup, listBackups, restoreBackup, type BackupManifest, type SubscriptionInfo } from '../../shared/api';
 
 export type CompanySettings = {
   name: string;
@@ -32,6 +32,8 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
   const [backups, setBackups] = useState<BackupManifest[]>([]);
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupMessage, setBackupMessage] = useState('');
+  const [importBusy, setImportBusy] = useState(false);
+  const [importMessage, setImportMessage] = useState('');
   const [subscription, setSubscription] = useState<SubscriptionInfo|null>(null);
   const [renewal, setRenewal] = useState({activationMode:'password' as 'password'|'license',licenseKey:'',softwarePassword:'',planName:'Desktop Annual',...renewalDates()});
   const [renewalMessage, setRenewalMessage] = useState('');
@@ -40,7 +42,7 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
   useEffect(() => setCompanyDraft(company), [company]);
   useEffect(() => {
     if (tab !== 'backup') return;
-    listBackups().then(setBackups).catch(error => setBackupMessage(error instanceof Error ? error.message : 'Unable to load backups'));
+    listBackups().then(result => setBackups(result.items)).catch(error => setBackupMessage(error instanceof Error ? error.message : 'Unable to load backups'));
   }, [tab]);
   useEffect(()=>{if(tab==='subscription')getSubscription().then(setSubscription).catch(error=>setRenewalMessage(error instanceof Error?error.message:'Unable to load subscription'))},[tab]);
 
@@ -66,9 +68,10 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
     setBackupBusy(true);
     setBackupMessage('');
     try {
-      const backup = await createBackup();
-      setBackups(current => [backup, ...current]);
-      setBackupMessage('Backup created successfully');
+      await createBackup();
+      const result = await listBackups();
+      setBackups(result.items);
+      setBackupMessage('Backup created successfully. Only the 2 most recent backups are kept.');
     } catch (error) {
       setBackupMessage(error instanceof Error ? error.message : 'Backup failed');
     } finally { setBackupBusy(false); }
@@ -86,6 +89,31 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
       setBackupMessage(error instanceof Error ? error.message : 'Restore failed');
       setBackupBusy(false);
     }
+  };
+
+  const saveBackup = async (backup: BackupManifest) => {
+    setBackupBusy(true);
+    setBackupMessage('');
+    try {
+      await downloadBackup(backup.id);
+      setBackupMessage('Backup downloaded as a .zip file');
+    } catch (error) {
+      setBackupMessage(error instanceof Error ? error.message : 'Download failed');
+    } finally { setBackupBusy(false); }
+  };
+
+  const importFile = async (file?: File) => {
+    if (!file) return;
+    setImportBusy(true);
+    setImportMessage('');
+    try {
+      await importBackup(file);
+      const result = await listBackups();
+      setBackups(result.items);
+      setImportMessage('Backup imported successfully');
+    } catch (error) {
+      setImportMessage(error instanceof Error ? error.message : 'Import failed');
+    } finally { setImportBusy(false); }
   };
   const renew=async()=>{setRenewalMessage('');try{const result=await activateSubscription(renewal);setSubscription(result);setRenewal({...renewal,licenseKey:'',softwarePassword:''});setRenewalMessage('Subscription renewed successfully.')}catch(error){setRenewalMessage(error instanceof Error?error.message:'Renewal failed')}};
 
@@ -187,10 +215,24 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
                   <strong>{new Date(backup.createdAt).toLocaleString()}</strong>
                   <span>{backup.counts.schools || 0} schools · {backup.counts.students || 0} students · {backup.counts.media_assets || 0} images</span>
                 </div>
-                <button className="outline mini-action" disabled={backupBusy} onClick={() => applyBackup(backup)}><RotateCcw size={14} /> Restore</button>
+                <div className="version-actions">
+                  <button className="outline mini-action" disabled={backupBusy} onClick={() => saveBackup(backup)}><Download size={14} /> Download</button>
+                  <button className="outline mini-action" disabled={backupBusy} onClick={() => applyBackup(backup)}><RotateCcw size={14} /> Restore</button>
+                </div>
               </div>
             ))}
             {!backups.length && <p className="photo-empty">No backups created yet.</p>}
+          </div>
+          <div className="backup-import">
+            <strong>Import backup</strong>
+            <p>Restore from a downloaded backup (.zip) file created on any device.</p>
+            <div className="backup-import-controls">
+              <label className="file-input">
+                {importBusy ? 'Importing…' : 'Choose backup file'}
+                <input type="file" accept=".zip,application/zip" disabled={importBusy} onChange={event => importFile(event.target.files?.[0])} />
+              </label>
+              {importMessage && <span>{importMessage}</span>}
+            </div>
           </div>
         </article>
       )}

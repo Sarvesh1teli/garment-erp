@@ -3,6 +3,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
+const { createZipBuffer, extractZipToDirectory } = require('./zip.cjs');
 const { SOFTWARE_OWNER_PASSWORD, COMMON_CUSTOMER_PASSWORD } = require('./license-config.cjs');
 
 const DEFAULT_PORT = 47831;
@@ -29,6 +30,24 @@ function readJson(request) {
     request.on('end', () => {
       try { resolve(JSON.parse(body || 'null')); } catch (error) { reject(error); }
     });
+    request.on('error', reject);
+  });
+}
+
+function readBody(request, maxBytes = 1024 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    request.on('data', chunk => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        request.destroy();
+        reject(new Error('Upload exceeds the allowed size limit'));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on('end', () => resolve(Buffer.concat(chunks)));
     request.on('error', reject);
   });
 }
@@ -545,6 +564,7 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
         counts,
       };
       fs.writeFileSync(path.join(directory, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
+      pruneBackups(2);
       return manifest;
     } catch (error) {
       fs.rmSync(directory, { recursive: true, force: true });
@@ -562,6 +582,48 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
       })
       .filter(Boolean)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  function pruneBackups(keep = 2) {
+    for (const item of listBackups().slice(keep)) {
+      fs.rmSync(safeBackupDirectory(item.id), { recursive: true, force: true });
+    }
+  }
+
+  function importBackup(zipBuffer) {
+    const staging = path.join(dataDirectory, `.import-backup-${crypto.randomBytes(4).toString('hex')}`);
+    fs.mkdirSync(staging, { recursive: true });
+    try {
+      extractZipToDirectory(zipBuffer, staging);
+      const manifestPath = path.join(staging, 'manifest.json');
+      const snapshotPath = path.join(staging, 'threadflow.db');
+      const backupAssets = path.join(staging, 'assets');
+      if (!fs.existsSync(manifestPath) || !fs.existsSync(snapshotPath) || !fs.existsSync(backupAssets)) throw new Error('Imported backup is incomplete: expected manifest.json, threadflow.db and assets/');
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      if (manifest.format !== 'threadflow-backup' || manifest.formatVersion !== 1) throw new Error('Unsupported backup format');
+      if (!/^[a-z0-9-]+$/i.test(String(manifest.id || ''))) throw new Error('Invalid backup id in manifest');
+
+      const validationDatabase = new DatabaseSync(snapshotPath, { readOnly: true });
+      try {
+        const integrity = validationDatabase.prepare('PRAGMA integrity_check').get();
+        if (!integrity || Object.values(integrity)[0] !== 'ok') throw new Error('Imported backup database integrity check failed');
+        const tables = new Set(validationDatabase.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(row => row.name));
+        for (const required of ['app_state', 'customers', 'schools', 'students', 'employees', 'media_assets']) {
+          if (!tables.has(required)) throw new Error(`Imported backup is missing required table: ${required}`);
+        }
+      } finally {
+        validationDatabase.close();
+      }
+
+      const destination = safeBackupDirectory(manifest.id);
+      if (fs.existsSync(destination)) throw new Error(`A backup with id ${manifest.id} already exists on this device`);
+      fs.renameSync(staging, destination);
+      pruneBackups(2);
+      return JSON.parse(fs.readFileSync(path.join(destination, 'manifest.json'), 'utf8'));
+    } catch (error) {
+      fs.rmSync(staging, { recursive: true, force: true });
+      throw error;
+    }
   }
 
   function restoreBackup(id) {
@@ -969,12 +1031,37 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     }
 
     if (url.pathname === '/api/backups') {
-      if (request.method === 'GET') return json(response, 200, { data: listBackups() });
+      if (request.method === 'GET') return json(response, 200, { data: { items: listBackups(), directory: backupsDirectory } });
       if (request.method === 'POST') {
         try { return json(response, 201, { data: createBackup() }); }
         catch (error) { return json(response, 500, { message: error.message || 'Backup failed' }); }
       }
       return json(response, 405, { message: 'Method not allowed' });
+    }
+
+    if (url.pathname === '/api/backups/import' && request.method === 'POST') {
+      try { return json(response, 201, { data: importBackup(await readBody(request)) }); }
+      catch (error) { return json(response, 400, { message: error.message || 'Backup import failed' }); }
+    }
+
+    const downloadMatch = url.pathname.match(/^\/api\/backups\/([a-z0-9-]+)\/download$/i);
+    if (downloadMatch && request.method === 'GET') {
+      const id = downloadMatch[1];
+      try {
+        const directory = safeBackupDirectory(id);
+        if (!fs.existsSync(path.join(directory, 'manifest.json'))) throw new Error('Backup not found');
+        const buffer = createZipBuffer(directory);
+        response.writeHead(200, {
+          'Content-Type': 'application/zip',
+          'Content-Length': buffer.length,
+          'Content-Disposition': `attachment; filename="ThreadFlow-backup-${id}.zip"`,
+          'Cache-Control': 'no-store',
+          'Access-Control-Allow-Origin': '*',
+        });
+        return response.end(buffer);
+      } catch (error) {
+        return json(response, 500, { message: error.message || 'Backup download failed' });
+      }
     }
 
     const restoreMatch = url.pathname.match(/^\/api\/backups\/([a-z0-9-]+)\/restore$/i);
