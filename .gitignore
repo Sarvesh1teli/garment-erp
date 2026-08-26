@@ -7,6 +7,7 @@ dist-electron/
 release/
 
 .local-data/
+.https/
 # Environment
 .env
 .env.local

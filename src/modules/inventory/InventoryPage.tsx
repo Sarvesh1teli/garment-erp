@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Boxes, FileText, GraduationCap, ListPlus, Pencil, Plus, Printer, Save, ShoppingBag, Trash2, Truck, Users } from 'lucide-react';
+import { AlertTriangle, Boxes, Camera, FileText, GraduationCap, ListPlus, Pencil, Plus, Printer, Save, ShoppingBag, Trash2, Truck, Users, X } from 'lucide-react';
 import type { CompanySettings } from '../settings/SettingsPage';
-import type { CustomerStock, Invoice, School, SchoolStock, StockSale } from '../../shared/types';
+import type { CustomerStock, Invoice, School, SchoolBarcode, SchoolStock, StockSale } from '../../shared/types';
 import { InvoiceDocument } from '../billing/BillingPaymentsPage';
-import { PrintPreview, Stats, Table } from '../../shared/ui';
+import { PrintPreview, BarcodeImage, BarcodeScannerModal, Stats, Table } from '../../shared/ui';
 import { money, useStoredState, API_BASE_URL } from '../../shared/utils';
 
 type InventoryItem=[string,string,string,string,string]|[string,string,string,string];
 type StockInRow=[string,string,string,string,string,string,string]|[string,string,string,string,string,string];
 type StockOutRow=[string,string,string,string,string,string,string]|[string,string,string,string,string,string];
 type InventoryTab='stock'|'in'|'out'|'items';
-type StockInTab='add'|'school'|'customer';
+type StockInTab='add'|'school'|'barcode'|'customer';
 type StockOutTab='general'|'school'|'customer';
 type StockView='material'|'school'|'customer';
 type PartyKind='School'|'Customer';
@@ -21,7 +21,8 @@ const defaultItems:InventoryItem[]=[];
 const defaultStockIn:StockInRow[]=[];
 const defaultStockOut:StockOutRow[]=[];
 const defaultGarments=['Shirt','Half Pant','Full Pant','Blouse','Skirt','Track Suit','Jacket'];
-const defaultSizes=['26','28','30','32','34','36','38','40','42','S','M','L','XL','XXL','Free Size'];
+const defaultGarmentTypes=['Shirt','Pant','Blouse','Skirt','Half Pant','Track Pant'];
+const defaultSizes=['24','26','28','30','32','34','36','38','40','42','S','M','L','XL','XXL','Free Size'];
 const today=()=>new Date().toISOString().slice(0,10);
 const sortSizes=(a:string,b:string)=>{const na=Number(a),nb=Number(b);if(!Number.isNaN(na)&&!Number.isNaN(nb))return na-nb;if(!Number.isNaN(na))return -1;if(!Number.isNaN(nb))return 1;return a.localeCompare(b)};
 const emptyPartyForm=():PartyForm=>({type:'School',date:today(),party:'',gender:'Boys',className:'',garment:defaultGarments[0],size:'',count:0,remarks:'',customGarment:'',customSize:''});
@@ -40,6 +41,24 @@ export function InventoryPage({company,customers,schools}:{company:CompanySettin
   const [customerStock,setCustomerStock]=useStoredState<CustomerStock[]>('garment-customer-stock',[]);
   const [sales,setSales]=useStoredState<StockSale[]>('garment-stock-sales',[]);
   const [invoices,setInvoices]=useStoredState<Invoice[]>('garment-invoices',[]);
+const [schoolBarcodes,setSchoolBarcodes]=useStoredState<SchoolBarcode[]>('garment-school-barcodes',[]);
+const currentYear=()=>{const y=new Date().getFullYear();return `${y}-${String(y+1).slice(2)}`;
+};
+const [barcodeForm,setBarcodeForm]=useState({school:'',year:currentYear(),shortTime:'',size:'28',garmentType:'Shirt',gender:'Boys'});
+const [showGenerateBarcode,setShowGenerateBarcode]=useState(false);
+const [viewBarcode,setViewBarcode]=useState<SchoolBarcode|null>(null);
+const [editBarcode,setEditBarcode]=useState<SchoolBarcode|null>(null);
+const [confirmDeleteBarcode,setConfirmDeleteBarcode]=useState<SchoolBarcode|null>(null);
+const [barcodeFilterSchool,setBarcodeFilterSchool]=useState('');
+const [barcodeFilterYear,setBarcodeFilterYear]=useState('');
+const [showBarcodeScanner,setShowBarcodeScanner]=useState(false);
+const [scanForSale,setScanForSale]=useState(false);
+const [openBarcodeAction,setOpenBarcodeAction]=useState<string|null>(null);
+const [selectedBarcodes,setSelectedBarcodes]=useState<Set<string>>(new Set());
+const [dropdownPos,setDropdownPos]=useState<{top:number;left:number}|null>(null);
+const [printBarcodes,setPrintBarcodes]=useState<SchoolBarcode[]|null>(null);
+const [scanCounts,setScanCounts]=useState<Record<string,number>>({});
+const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
   const [form,setForm]=useState({date:today(),item:items[0]?.[1]||'',subcategory:'',qty:0,vendor:'',remarks:''});
   const [itemForm,setItemForm]=useState({code:'',name:'',subcategory:'',unit:'Piece',openingQty:0});
   const [partyForm,setPartyForm]=useState<PartyForm>(emptyPartyForm());
@@ -52,6 +71,11 @@ export function InventoryPage({company,customers,schools}:{company:CompanySettin
   const [entriesGarment,setEntriesGarment]=useState('');
   const [entriesSize,setEntriesSize]=useState('');
   const [entriesYear,setEntriesYear]=useState('');
+  const [entriesSchool,setEntriesSchool]=useState('');
+  const [showScanStockInModal,setShowScanStockInModal]=useState(false);
+  const [openStockAction,setOpenStockAction]=useState<string|null>(null);
+  const [stockDropdownPos,setStockDropdownPos]=useState<{top:number;left:number}|null>(null);
+  const [viewStockEntry,setViewStockEntry]=useState<SchoolStock|null>(null);
   const [outYear,setOutYear]=useState('');
   const [outParty,setOutParty]=useState('');
   const [outGender,setOutGender]=useState('');
@@ -67,7 +91,15 @@ export function InventoryPage({company,customers,schools}:{company:CompanySettin
   const hasOldItemRows=useMemo(()=>items.some(item=>item.length===4),[items]);
   useEffect(()=>{if(hasOldItemRows)setItems(normalizedItems)},[hasOldItemRows,normalizedItems,setItems]);
   useEffect(()=>{if(!normalizedItems.some(item=>item[1]===form.item))setForm(current=>({...current,item:normalizedItems[0]?.[1]||'',subcategory:normalizedItems[0]?.[2]||''}))},[normalizedItems,form.item]);
-  useEffect(()=>{let active=true;fetch(`${API_BASE_URL}/api/ready-school-stock`).then(async response=>{if(response.status===404)return [];if(!response.ok)throw new Error('Unable to load ready stock');const body=await response.json();return body.data as SchoolStock[]}).then(rows=>{if(!active)return;setSchoolStock(current=>{const map=new Map(current.map(s=>[s.id,s]));rows.forEach(row=>{map.set(row.id,row)});return [...map.values()]})}).catch(error=>console.error(error));return()=>{active=false}},[]);
+  useEffect(()=>{
+    let active=true;
+    const syncStock=()=>{
+      fetch(`${API_BASE_URL}/api/ready-school-stock`).then(async response=>{if(response.status===404)return [];if(!response.ok)throw new Error('Unable to load ready stock');const body=await response.json();return body.data as SchoolStock[]}).then(rows=>{if(!active)return;setSchoolStock(current=>{const map=new Map(current.map(s=>[s.id,s]));rows.forEach(row=>{map.set(row.id,row)});return [...map.values()]})}).catch(error=>console.error(error));
+    };
+    syncStock();
+    const timer=setInterval(syncStock,3000);
+    return()=>{active=false;clearInterval(timer)};
+  },[]);
 
   const updateItemQty=(itemName:string,delta:number)=>setItems(current=>current.map(item=>{const row=item.length===4?[item[0],item[1],'-',item[2],item[3]] as InventoryItem:item;return row[1]===itemName?[row[0],row[1],row[2],row[3],String(Math.max(0,Number(row[4]||0)+delta))]:row}));
   const selectedItem=normalizedItems.find(item=>item[1]===form.item);
@@ -107,8 +139,32 @@ export function InventoryPage({company,customers,schools}:{company:CompanySettin
   const safeItemPage=Math.min(itemPage,itemPageCount);
   const visibleItems=normalizedItems.slice((safeItemPage-1)*itemPageSize,safeItemPage*itemPageSize);
   useEffect(()=>{if(itemPage>itemPageCount)setItemPage(itemPageCount)},[itemPage,itemPageCount]);
+  useEffect(()=>{if(!openBarcodeAction&&!openStockAction)return;const handler=()=>{setOpenBarcodeAction(null);setOpenStockAction(null);setDropdownPos(null);setStockDropdownPos(null)};document.addEventListener('click',handler);return()=>document.removeEventListener('click',handler)},[openBarcodeAction,openStockAction]);
 
-  const schoolRows=schoolStock.map(s=>[s.id,s.date||'-',s.school,s.gender,s.garment,s.size,String(s.count),s.remarks||'-']);
+  const consolidatedSchoolStock=useMemo(()=>{
+    const map=new Map<string,SchoolStock>();
+    schoolStock.forEach(s=>{
+      const key=`${s.school}||${s.gender}||${s.garment}||${s.size}`;
+      if(map.has(key)){
+        const existing=map.get(key)!;
+        map.set(key,{...existing,count:existing.count+s.count});
+      }else{
+        map.set(key,{...s});
+      }
+    });
+    return [...map.values()];
+  },[schoolStock]);
+
+  const filteredSchoolStock=useMemo(()=>consolidatedSchoolStock.filter(s=>{
+    if(entriesYear&&(s.date||'').slice(0,4)!==entriesYear)return false;
+    if(entriesSchool&&s.school!==entriesSchool)return false;
+    if(entriesGender&&s.gender!==entriesGender)return false;
+    if(entriesGarment&&s.garment!==entriesGarment)return false;
+    if(entriesSize&&s.size!==entriesSize)return false;
+    return true;
+  }),[consolidatedSchoolStock,entriesYear,entriesSchool,entriesGender,entriesGarment,entriesSize]);
+
+  const schoolRows=filteredSchoolStock.map(s=>[s.id,s.date||'-',s.school,s.gender,s.garment,s.size,String(s.count),s.remarks||'-']);
   const customerRows=customerStock.map(s=>[s.id,s.date,s.customer,s.garment,s.size,String(s.count),s.remarks||'-']);
   const summaryLevelRows=summaryRows.map(r=>[r.party,r.garment,r.size,String(r.added),String(r.issued),String(r.available)]);
   const totalAvailable=summaryRows.reduce((a,r)=>a+r.available,0);
@@ -160,7 +216,62 @@ export function InventoryPage({company,customers,schools}:{company:CompanySettin
   const selectedGarmentName=saleForm.garment==='Other'?saleForm.customGarment.trim():saleForm.garment;
   const selectedSizeName=saleForm.size==='Custom'?saleForm.customSize.trim():saleForm.size;
 
-  const switchInTab=(next:StockInTab)=>{setInTab(next);setEditEntry(null);setShowPartyStock(false);if(next!=='add'){const type:PartyKind=next==='school'?'School':'Customer';setPartyForm(current=>({...current,type,party:type==='School'?activeSchools[0]?.name||schools[0]?.name||'':activeCustomers[0]?.[1]||customers[0]?.[1]||'',garment:defaultGarments[0],size:'',className:''}))}};
+  const switchInTab=(next:StockInTab)=>{setInTab(next);setEditEntry(null);setShowPartyStock(false);setShowGenerateBarcode(false);setViewBarcode(null);setEditBarcode(null);setConfirmDeleteBarcode(null);setBarcodeFilterSchool('');setBarcodeFilterYear('');if(next!=='add'&&next!=='barcode'){const type:PartyKind=next==='school'?'School':'Customer';setPartyForm(current=>({...current,type,party:type==='School'?activeSchools[0]?.name||schools[0]?.name||'':activeCustomers[0]?.[1]||customers[0]?.[1]||'',garment:defaultGarments[0],size:'',className:''}))}};
+
+const generateSchoolBarcode=()=>{if(!barcodeForm.school){setMessage('Please select a school.');return}const nextNum=schoolBarcodes.length+1;const barcode=`TC-SCH-${String(nextNum).padStart(6,'0')}`;const newBarcode:SchoolBarcode={id:`BC-${Date.now()}`,barcode,school:barcodeForm.school,year:barcodeForm.year,shortTime:barcodeForm.shortTime,size:barcodeForm.size,garmentType:barcodeForm.garmentType,gender:barcodeForm.gender,generatedDate:today()};setSchoolBarcodes(current=>[newBarcode,...current]);setBarcodeForm({school:'',year:currentYear(),shortTime:'',size:'28',garmentType:'Shirt',gender:'Boys'});setShowGenerateBarcode(false);setMessage(`Barcode ${barcode} generated successfully.`)};
+
+const startEditBarcode=(bc:SchoolBarcode)=>{setBarcodeForm({school:bc.school,year:bc.year||currentYear(),shortTime:bc.shortTime,size:bc.size,garmentType:bc.garmentType,gender:bc.gender});setEditBarcode(bc);setShowGenerateBarcode(true)};
+
+const saveEditBarcode=()=>{if(!editBarcode||!barcodeForm.school){setMessage('Please select a school.');return}const updated:SchoolBarcode={...editBarcode,school:barcodeForm.school,year:barcodeForm.year,shortTime:barcodeForm.shortTime,size:barcodeForm.size,garmentType:barcodeForm.garmentType,gender:barcodeForm.gender};setSchoolBarcodes(current=>current.map(b=>b.id===updated.id?updated:b));setEditBarcode(null);setBarcodeForm({school:'',year:currentYear(),shortTime:'',size:'28',garmentType:'Shirt',gender:'Boys'});setShowGenerateBarcode(false);setMessage(`Barcode ${updated.barcode} updated successfully.`)};
+
+const confirmDeleteBarcodeFn=()=>{if(!confirmDeleteBarcode)return;setSchoolBarcodes(current=>current.filter(b=>b.id!==confirmDeleteBarcode.id));setMessage(`Barcode ${confirmDeleteBarcode.barcode} deleted.`);setConfirmDeleteBarcode(null)};
+
+const handleBarcodeScanResult=(code:string)=>{const found=schoolBarcodes.find(b=>b.barcode===code);if(!found){setMessage(`Barcode ${code} not found in system.`);return}setScanCounts(current=>({...current,[code]:(current[code]||0)+1}));setScanHistory(current=>[{barcode:code,time:new Date().toLocaleTimeString()},...current])};
+const removeScanCount=(code:string)=>{setScanCounts(current=>{const next={...current};delete next[code];return next})};
+const clearAllScans=()=>{setScanCounts({});setScanHistory([])};
+const totalScanCount=Object.values(scanCounts).reduce((a,b)=>a+b,0);
+
+const scanSummary=useMemo(()=>{
+const map:Record<string,{barcode:string;school:string;gender:string;garment:string;size:string;count:number}>={};
+Object.entries(scanCounts).forEach(([code,count])=>{const bc=schoolBarcodes.find(b=>b.barcode===code);if(!bc)return;const key=`${bc.school}||${bc.gender}||${bc.garmentType}||${bc.size}`;if(!map[key])map[key]={barcode:bc.barcode,school:bc.school,gender:bc.gender,garment:bc.garmentType,size:bc.size,count:0};map[key].count+=count});
+return Object.values(map);
+},[scanCounts,schoolBarcodes]);
+
+const filteredBarcodes=useMemo(()=>schoolBarcodes.filter(b=>(!barcodeFilterSchool||b.school===barcodeFilterSchool)&&(!barcodeFilterYear||b.year===barcodeFilterYear)),[schoolBarcodes,barcodeFilterSchool,barcodeFilterYear]);
+
+const toggleBarcodeSelect=(id:string)=>setSelectedBarcodes(prev=>{const next=new Set(prev);if(next.has(id))next.delete(id);else next.add(id);return next});
+const toggleAllBarcodes=()=>{if(selectedBarcodes.size===filteredBarcodes.length){setSelectedBarcodes(new Set())}else{setSelectedBarcodes(new Set(filteredBarcodes.map(b=>b.id)))}};
+const handlePrintBarcodes=(barcodes:SchoolBarcode[])=>{if(!barcodes.length){setMessage('Select at least one barcode to print.');return}setPrintBarcodes(barcodes)};
+
+const saveScanStockIn=async()=>{
+  if(!scanSummary.length){setMessage('No scans to save.');return}
+  let saved=0;
+  for(const row of scanSummary){
+    const existing=schoolStock.find(s=>s.school===row.school&&s.gender===row.gender&&s.garment===row.garment&&s.size===row.size);
+    if(existing){
+      const newCount=existing.count+row.count;
+      const payload={...existing,count:newCount,date:today(),remarks:`Barcode scan: ${row.barcode}`};
+      try{
+        const response=await fetch(`${API_BASE_URL}/api/ready-school-stock/${existing.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        if(!response.ok)throw new Error('Unable to update stock');
+        setSchoolStock(current=>current.map(s=>s.id===existing.id?payload:s));
+        saved++;
+      }catch(e){console.error(e)}
+    }else{
+      const payload={school:row.school,className:'General',date:today(),gender:row.gender,garment:row.garment,size:row.size,count:row.count,remarks:`Barcode scan: ${row.barcode}`};
+      try{
+        const response=await fetch(`${API_BASE_URL}/api/ready-school-stock`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        if(!response.ok)throw new Error('Unable to save');
+        const body=await response.json();
+        const entry:SchoolStock={id:body.data.id,...payload};
+        setSchoolStock(current=>[entry,...current]);
+        saved++;
+      }catch(e){setMessage(e instanceof Error?e.message:'Unable to save stock');return}
+    }
+  }
+  setMessage(`Stock in updated: ${totalScanCount} pieces saved to consolidated stock.`);
+  clearAllScans();
+};
   const switchStockView=(next:StockView)=>{setStockView(next);setEditEntry(null);setEntriesGender('');setEntriesGarment('');setEntriesSize('');setEntriesYear('');if(next!=='material'){const type:PartyKind=next==='school'?'School':'Customer';setSummaryParty('');setSummaryType(type)}};
   const switchOutTab=(next:StockOutTab)=>{setOutTab(next);if(next!=='general'){const type:PartyKind=next==='school'?'School':'Customer';setSaleForm(current=>({...current,type,party:type==='School'?activeSchools[0]?.name||schools[0]?.name||'':activeCustomers[0]?.[1]||customers[0]?.[1]||'',garment:'',size:'',count:0,rate:0}))}};
 
@@ -229,8 +340,20 @@ export function InventoryPage({company,customers,schools}:{company:CompanySettin
     <div className="form-actions"><button className="outline" onClick={closePartyStockForm}>Cancel</button><button className="primary" onClick={addPartyStock}>{editEntry?<Save size={16}/>:<Plus size={16}/>} {editEntry?'Save changes':'Add stock'}</button></div>
   </article></div>;
 
+  const handleSaleBarcodeScan=(code:string)=>{
+    const bc=schoolBarcodes.find(b=>b.barcode===code);
+    if(!bc){setMessage(`Barcode ${code} not found.`);return}
+    setSaleForm(prev=>{
+      const isSameItem=prev.party===bc.school&&prev.gender===bc.gender&&prev.garment===bc.garmentType&&prev.size===bc.size;
+      const nextCount=isSameItem?(prev.count||0)+1:1;
+      return {...prev,party:bc.school,gender:bc.gender,garment:bc.garmentType,size:bc.size,count:nextCount};
+    });
+    setMessage(`✓ Scanned barcode: ${bc.school} · ${bc.gender} ${bc.garmentType} (Size ${bc.size}) — count set to stock issue.`);
+  };
+
   const saleFormUI=<article className="card measurement-form">
     <div className="form-title"><div><h2>{saleForm.type==='School'?'Issue stock to school':'Issue stock to customer'}</h2><p>Issue ready stock and automatically create a tax invoice.</p></div><span className="batch-no">AVAILABLE {selectedCombo?selectedCombo.available:0} PCS</span></div>
+    <div className="sale-scan-row"><input className="barcode-scan-input" placeholder="Scan or type barcode to auto-fill fields" onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();const v=(e.target as HTMLInputElement).value.trim();if(v){handleSaleBarcodeScan(v);(e.target as HTMLInputElement).value=''}}}}/><button className="primary scan-inline-btn" onClick={()=>{setScanForSale(true);setShowBarcodeScanner(true)}}><Camera size={14}/> Scan</button></div>
     <div className="form-grid">
       <label>Date<input type="date" value={saleForm.date} onChange={e=>setSaleForm({...saleForm,date:e.target.value})}/></label>
       <label>{saleForm.type==='School'?'School name':'Customer'}<select value={saleForm.party} onChange={e=>setSaleForm({...saleForm,party:e.target.value,garment:'',size:''})}><option value="">Select {saleForm.type==='School'?'school':'customer'}</option>{salePartyOptions}</select></label>
@@ -258,12 +381,27 @@ export function InventoryPage({company,customers,schools}:{company:CompanySettin
       <div className="inventory-line-tabs" role="tablist" aria-label="Stock in views">
         <button className={inTab==='add'?'active':''} onClick={()=>switchInTab('add')}>Material Stock In</button>
         <button className={inTab==='school'?'active':''} onClick={()=>switchInTab('school')}>School Stock In</button>
+        <button className={inTab==='barcode'?'active':''} onClick={()=>switchInTab('barcode')}>School Barcode</button>
         <button className={inTab==='customer'?'active':''} onClick={()=>switchInTab('customer')}>Customer Stock In</button>
       </div>
       <div className="inventory-tab-content">
       {inTab==='add'&&<><article className="card measurement-form"><div className="form-title"><div><h2>Add stock in</h2><p>Record material received from vendor.</p></div></div><div className="form-grid"><label>Date<input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label><label>Item<select value={form.item} onChange={e=>changeStockItem(e.target.value)}>{itemOptions}</select></label><label>Subcategory<input value={form.subcategory} onChange={e=>setForm({...form,subcategory:e.target.value})} placeholder={selectedItem?.[2]||'Manual subcategory'}/></label><label>Quantity<input type="number" min="0" value={form.qty} onChange={e=>setForm({...form,qty:Number(e.target.value)})}/></label><label>Vendor<input value={form.vendor} onChange={e=>setForm({...form,vendor:e.target.value})}/></label><label className="wide">Bill / Remarks<input value={form.remarks} onChange={e=>setForm({...form,remarks:e.target.value})}/></label></div><div className="form-actions"><button className="primary" onClick={addStockIn}><Plus size={16}/> Add stock in</button></div></article><Table title="Stock in history" copy="Material received entries" headers={['ENTRY','DATE','ITEM','SUBCATEGORY','QTY','VENDOR','BILL / REMARKS']} rows={normalizedStockIn} paged/></>}
-      {inTab==='school'&&<><Stats values={[['Schools',String(new Set(schoolStock.map(s=>s.school)).size),'with ready stock'],['Pieces Added',String(schoolStock.reduce((a,s)=>a+s.count,0)),'school pieces'],['Issued',String(schoolSales.reduce((a,s)=>a+s.count,0)),'pieces sold'],['Available',String(schoolStock.reduce((a,s)=>a+s.count,0)-schoolSales.reduce((a,s)=>a+s.count,0)),'ready pieces']]}/><Table title="School ready stock entries" copy="Date, school, gender, garment, size and count records" headers={['ID','DATE','SCHOOL','GENDER','GARMENT','SIZE','COUNT','REMARKS']} rows={schoolRows} paged action={<button className="primary" onClick={openAddPartyStock}><Plus size={15}/> Add Ready stock</button>} actions={row=>{const entry=schoolStock.find(s=>s.id===row[0]);return entry?<div className="table-actions"><button className="outline mini-action" onClick={()=>startEdit(entry)}><Pencil size={14}/></button><button className="outline mini-action danger" onClick={()=>deleteSchoolStock(entry)}><Trash2 size={14}/></button></div>:null}}/></>}
+      {inTab==='school'&&<><Stats values={[['Schools',String(new Set(schoolStock.map(s=>s.school)).size),'with ready stock'],['Pieces Added',String(schoolStock.reduce((a,s)=>a+s.count,0)),'school pieces'],['Issued',String(schoolSales.reduce((a,s)=>a+s.count,0)),'pieces sold'],['Available',String(schoolStock.reduce((a,s)=>a+s.count,0)-schoolSales.reduce((a,s)=>a+s.count,0)),'ready pieces']]}/>
+      <div className="filterbar ready-stock-filter">
+        <label>Year<select value={entriesYear} onChange={e=>setEntriesYear(e.target.value)}><option value="">All years</option>{schoolYears.map(y=><option key={y}>{y}</option>)}</select></label>
+        <label>School<select value={entriesSchool} onChange={e=>setEntriesSchool(e.target.value)}><option value="">All schools</option>{summarySchools.map(s=><option key={s}>{s}</option>)}</select></label>
+        <label>Gender<select value={entriesGender} onChange={e=>setEntriesGender(e.target.value)}><option value="">All</option><option>Boys</option><option>Girls</option></select></label>
+        <label>Garment<select value={entriesGarment} onChange={e=>setEntriesGarment(e.target.value)}><option value="">All garments</option>{schoolGarmentOptions.map(g=><option key={g}>{g}</option>)}</select></label>
+        <label>Size<select value={entriesSize} onChange={e=>setEntriesSize(e.target.value)}><option value="">All sizes</option>{schoolSizeOptions.map(s=><option key={s}>{s}</option>)}</select></label>
+      </div>
+      <Table title="School ready stock entries" copy="Date, school, gender, garment, size and count records" headers={['ID','DATE','SCHOOL','GENDER','GARMENT','SIZE','COUNT','REMARKS']} rows={schoolRows} paged action={<div style={{display:'flex',gap:8}}><button className="outline" onClick={()=>setShowScanStockInModal(true)}><Camera size={15}/> Scan Barcode {totalScanCount>0?`(${totalScanCount})`:''}</button><button className="primary" onClick={openAddPartyStock}><Plus size={15}/> Add Ready stock</button></div>} actions={row=>{const entry=consolidatedSchoolStock.find(s=>s.id===row[0]);if(!entry)return null;return <div className="dropdown-action-cell"><button className="outline mini-action dropdown-trigger" onClick={e=>{e.stopPropagation();const rect=(e.currentTarget as HTMLElement).getBoundingClientRect();const pos={top:rect.bottom+4,left:Math.max(8,rect.right-160)};setStockDropdownPos(openStockAction===entry.id?null:pos);setOpenStockAction(openStockAction===entry.id?null:entry.id)}}>Actions <span className="dropdown-arrow"/></button>{openStockAction===entry.id&&stockDropdownPos&&<div className="dropdown-menu" style={{top:stockDropdownPos.top,left:stockDropdownPos.left}}><button className="dropdown-item" onClick={()=>{setOpenStockAction(null);setStockDropdownPos(null);setViewStockEntry(entry)}}><FileText size={14}/> Details</button><button className="dropdown-item" onClick={()=>{setOpenStockAction(null);setStockDropdownPos(null);startEdit(entry)}}><Pencil size={14}/> Edit</button><button className="dropdown-item danger" onClick={()=>{setOpenStockAction(null);setStockDropdownPos(null);deleteSchoolStock(entry)}}><Trash2 size={14}/> Delete</button></div>}</div>}}/>
+      {showScanStockInModal&&<div className="stock-modal-overlay" onClick={()=>setShowScanStockInModal(false)}><article className="card measurement-form entry-modal barcode-scanner-modal" style={{maxWidth:'860px'}} onClick={e=>e.stopPropagation()}><div className="form-title"><div><h2><Camera size={18}/> Scan Barcode — Stock In</h2><p>Each scan adds +1 piece. Point USB scanner or mobile camera to scan tags.</p></div><button className="outline mini-action" onClick={()=>setShowScanStockInModal(false)}><X size={16}/></button></div><div className="scanner-body" style={{marginTop:'12px'}}><div className="barcode-scan-actions-row"><button className="primary" onClick={()=>{setScanForSale(false);setShowBarcodeScanner(true)}}><Camera size={16}/> Open Camera Scanner</button>{totalScanCount>0&&<span className="scan-total-badge">{totalScanCount} scans queued</span>}</div>{totalScanCount>0&&<div className="scan-summary"><div className="scan-summary-header"><h3>Scan Summary</h3><div className="scan-summary-actions"><button className="outline mini-action" onClick={clearAllScans}><Trash2 size={14}/> Clear All</button><button className="primary" onClick={async()=>{await saveScanStockIn();setShowScanStockInModal(false)}}><Save size={14}/> Save Stock In ({totalScanCount} pcs)</button></div></div><table><thead><tr><th>SCHOOL</th><th>GENDER</th><th>GARMENT</th><th>SIZE</th><th>BARCODE</th><th>STOCK IN</th><th></th></tr></thead><tbody>{scanSummary.map(r=><tr key={r.barcode}><td><strong>{r.school}</strong></td><td>{r.gender}</td><td>{r.garment}</td><td>{r.size}</td><td><div className="barcode-cell"><BarcodeImage value={r.barcode} width={1} height={22} fontSize={9} displayValue={true}/></div></td><td><strong className="scan-count-cell">{r.count}</strong></td><td><button className="outline mini-action danger" onClick={()=>removeScanCount(r.barcode)}><Trash2 size={13}/></button></td></tr>)}<tr className="scan-total-row"><td colSpan={5}><strong>TOTAL</strong></td><td colSpan={2}><strong>{totalScanCount} pieces</strong></td></tr></tbody></table></div>}{scanHistory.length>0&&<div className="scan-history"><h4>Recent Scans</h4><div className="scan-history-list">{scanHistory.slice(0,20).map((s,i)=><div key={i} className="scan-history-item"><span className="scan-history-barcode">{s.barcode}</span><span className="scan-history-time">{s.time}</span></div>)}</div></div>}<div className="form-actions" style={{marginTop:'16px'}}><button className="outline" onClick={()=>setShowScanStockInModal(false)}>Close</button>{totalScanCount>0&&<button className="primary" onClick={async()=>{await saveScanStockIn();setShowScanStockInModal(false)}}><Save size={16}/> Save Stock In ({totalScanCount} pcs)</button>}</div></div></article></div>}</>}
       {inTab==='customer'&&<><Stats values={[['Customers',String(new Set(customerStock.map(s=>s.customer)).size),'with ready stock'],['Pieces Added',String(customerStock.reduce((a,s)=>a+s.count,0)),'customer pieces'],['Issued',String(customerSales.reduce((a,s)=>a+s.count,0)),'pieces sold'],['Available',String(customerStock.reduce((a,s)=>a+s.count,0)-customerSales.reduce((a,s)=>a+s.count,0)),'ready pieces']]}/><Table title="Customer ready stock entries" copy="Date, customer, garment, size and count records" headers={['ID','DATE','CUSTOMER','GARMENT','SIZE','COUNT','REMARKS']} rows={customerRows} paged action={<button className="primary" onClick={openAddPartyStock}><Plus size={15}/> Add Ready stock</button>} actions={row=>{const entry=customerStock.find(s=>s.id===row[0]);return entry?<div className="table-actions"><button className="outline mini-action" onClick={()=>startEdit(entry)}><Pencil size={14}/></button><button className="outline mini-action danger" onClick={()=>deleteCustomerStock(entry.id)}><Trash2 size={14}/></button></div>:null}}/></>}
+      {inTab==='barcode'&&<><div className="filterbar ready-stock-filter"><label>Year<select value={barcodeFilterYear} onChange={e=>{setBarcodeFilterYear(e.target.value);setOpenBarcodeAction(null)}}><option value="">All years</option>{Array.from(new Set(schoolBarcodes.map(b=>b.year).filter(Boolean))).sort().reverse().map(y=><option key={y} value={y}>{y}</option>)}</select></label><label>School<select value={barcodeFilterSchool} onChange={e=>{setBarcodeFilterSchool(e.target.value);setOpenBarcodeAction(null)}}><option value="">All schools</option>{Array.from(new Set(schoolBarcodes.map(b=>b.school))).sort().map(s=><option key={s} value={s}>{s}</option>)}</select></label></div><article className="card jobs module-table"><div className="cardhead"><div><h2>School Barcode List</h2><p>Generated barcodes for school ready stock</p></div><div className="cardhead-actions">{selectedBarcodes.size>0&&<button className="outline" onClick={()=>handlePrintBarcodes(filteredBarcodes.filter(b=>selectedBarcodes.has(b.id)))}><Printer size={15}/> Print Selected ({selectedBarcodes.size})</button>}{filteredBarcodes.length>0&&<button className="outline" onClick={()=>handlePrintBarcodes(filteredBarcodes)}><Printer size={15}/> Print All ({filteredBarcodes.length})</button>}<button className="primary" onClick={()=>{setEditBarcode(null);setBarcodeForm({school:'',year:currentYear(),shortTime:'',size:'28',garmentType:'Shirt',gender:'Boys'});setShowGenerateBarcode(true)}}><Plus size={15}/> Generate Barcode</button></div></div><table><thead><tr><th style={{width:40}}><input type="checkbox" checked={selectedBarcodes.size===filteredBarcodes.length&&filteredBarcodes.length>0} onChange={toggleAllBarcodes}/></th><th>YEAR</th><th>SCHOOL</th><th>SHORT TIME</th><th>DATE</th><th>GENDER</th><th>GARMENT</th><th>SIZE</th><th>BARCODE</th><th>ACTIONS</th></tr></thead><tbody>{filteredBarcodes.map(b=><tr key={b.id}><td><input type="checkbox" checked={selectedBarcodes.has(b.id)} onChange={()=>toggleBarcodeSelect(b.id)}/></td><td>{b.year||'-'}</td><td><strong>{b.school}</strong></td><td>{b.shortTime||'-'}</td><td>{b.generatedDate}</td><td>{b.gender}</td><td>{b.garmentType}</td><td>{b.size}</td><td><div className="barcode-cell"><BarcodeImage value={b.barcode} width={1.2} height={28} fontSize={10}/></div></td><td><div className="dropdown-action-cell"><button className="outline mini-action dropdown-trigger" onClick={e=>{e.stopPropagation();const rect=(e.currentTarget as HTMLElement).getBoundingClientRect();const pos={top:rect.bottom+4,left:Math.max(8,rect.right-160)};setDropdownPos(openBarcodeAction===b.id?null:pos);setOpenBarcodeAction(openBarcodeAction===b.id?null:b.id)}}>Actions <span className="dropdown-arrow"/></button>{openBarcodeAction===b.id&&dropdownPos&&<div className="dropdown-menu" style={{top:dropdownPos.top,left:dropdownPos.left}}><button className="dropdown-item" onClick={()=>{setOpenBarcodeAction(null);setDropdownPos(null);setViewBarcode(b)}}><FileText size={14}/> Details</button><button className="dropdown-item" onClick={()=>{setOpenBarcodeAction(null);setDropdownPos(null);startEditBarcode(b)}}><Pencil size={14}/> Edit</button><button className="dropdown-item danger" onClick={()=>{setOpenBarcodeAction(null);setDropdownPos(null);setConfirmDeleteBarcode(b)}}><Trash2 size={14}/> Delete</button></div>}</div></td></tr>)}</tbody></table>{!filteredBarcodes.length&&<div className="empty-row">No barcodes found</div>}</article></>}
+      {showGenerateBarcode&&<div className="stock-modal-overlay" onClick={()=>{setShowGenerateBarcode(false);setEditBarcode(null)}}><article className="card measurement-form entry-modal" onClick={e=>e.stopPropagation()}><div className="form-title"><div><h2>{editBarcode?'Edit School Barcode':'Generate School Barcode'}</h2><p>{editBarcode?`Update barcode ${editBarcode.barcode}`:'Create a new barcode for school ready stock tracking.'}</p></div></div><div className="form-grid"><label>Year<select value={barcodeForm.year} onChange={e=>setBarcodeForm({...barcodeForm,year:e.target.value})}>{['2025-26','2026-27','2027-28','2028-29','2029-30'].map(y=><option key={y} value={y}>{y}</option>)}</select></label><label>School<select value={barcodeForm.school} onChange={e=>setBarcodeForm({...barcodeForm,school:e.target.value})}><option value="">Select school</option>{activeSchools.map(s=><option key={s.id} value={s.name}>{s.name}</option>)}</select></label><label>Short Time<input value={barcodeForm.shortTime} onChange={e=>setBarcodeForm({...barcodeForm,shortTime:e.target.value})} placeholder="Example: 10AM"/></label><label>Size<select value={barcodeForm.size} onChange={e=>setBarcodeForm({...barcodeForm,size:e.target.value})}>{['24','26','28','30','32','34','36','38','40','42'].map(s=><option key={s} value={s}>{s}</option>)}</select></label><label>Garment Type<select value={barcodeForm.garmentType} onChange={e=>setBarcodeForm({...barcodeForm,garmentType:e.target.value})}>{defaultGarmentTypes.map(g=><option key={g} value={g}>{g}</option>)}</select></label><label>Gender<select value={barcodeForm.gender} onChange={e=>setBarcodeForm({...barcodeForm,gender:e.target.value})}><option>Boys</option><option>Girls</option></select></label></div><div className="form-actions"><button className="outline" onClick={()=>{setShowGenerateBarcode(false);setEditBarcode(null)}}>Cancel</button><button className="primary" onClick={editBarcode?saveEditBarcode:generateSchoolBarcode}>{editBarcode?<>Save Changes</>:<>Generate Barcode</>}</button></div></article></div>}
+      {viewBarcode&&<div className="stock-modal-overlay" onClick={()=>setViewBarcode(null)}><article className="card measurement-form detail-modal" onClick={e=>e.stopPropagation()}><div className="form-title"><div><h2>Barcode Details</h2><p>Information stored for this barcode.</p></div><span className="batch-no">{viewBarcode.barcode}</span></div><div className="barcode-print-preview"><BarcodeImage value={viewBarcode.barcode} width={2.5} height={50} fontSize={14}/></div><div className="detail-grid"><div><span>School</span><strong>{viewBarcode.school}</strong></div><div><span>Barcode</span><strong>{viewBarcode.barcode}</strong></div><div><span>Year</span><strong>{viewBarcode.year||'-'}</strong></div><div><span>Short Time</span><strong>{viewBarcode.shortTime||'-'}</strong></div><div><span>Size</span><strong>{viewBarcode.size}</strong></div><div><span>Garment Type</span><strong>{viewBarcode.garmentType}</strong></div><div><span>Gender</span><strong>{viewBarcode.gender}</strong></div><div><span>Generated Date</span><strong>{viewBarcode.generatedDate}</strong></div></div><div className="form-actions"><button className="outline" onClick={()=>setViewBarcode(null)}>Close</button></div></article></div>}
+      {viewStockEntry&&<div className="stock-modal-overlay" onClick={()=>setViewStockEntry(null)}><article className="card measurement-form detail-modal" onClick={e=>e.stopPropagation()}><div className="form-title"><div><h2>Ready Stock Details</h2><p>Information stored for this ready stock entry.</p></div><span className="batch-no">{viewStockEntry.id}</span></div><div className="barcode-print-preview"><BarcodeImage value={schoolBarcodes.find(b=>b.school===viewStockEntry.school&&b.gender===viewStockEntry.gender&&b.garmentType===viewStockEntry.garment&&b.size===viewStockEntry.size)?.barcode||`STOCK-${viewStockEntry.id}`} width={2.5} height={50} fontSize={14}/></div><div className="detail-grid"><div><span>School</span><strong>{viewStockEntry.school}</strong></div><div><span>Entry ID</span><strong>{viewStockEntry.id}</strong></div><div><span>Date</span><strong>{viewStockEntry.date}</strong></div><div><span>Gender</span><strong>{viewStockEntry.gender}</strong></div><div><span>Garment</span><strong>{viewStockEntry.garment}</strong></div><div><span>Size</span><strong>{viewStockEntry.size}</strong></div><div><span>Total Ready Count</span><strong>{viewStockEntry.count} Pcs</strong></div><div><span>Remarks</span><strong>{viewStockEntry.remarks||'-'}</strong></div></div><div className="form-actions"><button className="outline" onClick={()=>setViewStockEntry(null)}>Close</button></div></article></div>}
+      {confirmDeleteBarcode&&<div className="salary-modal-overlay" onClick={()=>setConfirmDeleteBarcode(null)}><div className="salary-modal confirm-dialog" onClick={e=>e.stopPropagation()}><div className="confirm-icon"><AlertTriangle size={22}/></div><h3>Delete barcode?</h3><p>This will permanently remove barcode <strong>{confirmDeleteBarcode.barcode}</strong> assigned to <strong>{confirmDeleteBarcode.school}</strong>. This action cannot be undone.</p><div className="salary-modal-actions"><button className="outline" onClick={()=>setConfirmDeleteBarcode(null)}>Cancel</button><button className="danger-btn" onClick={confirmDeleteBarcodeFn}><Trash2 size={14}/> Yes, delete barcode</button></div></div></div>}
       </div>
     </div>}
     {tab==='out'&&<div className="inventory-view-panel">
@@ -282,5 +420,32 @@ export function InventoryPage({company,customers,schools}:{company:CompanySettin
     {partyStockModal}
     {confirmStock&&<div className="salary-modal-overlay" onClick={()=>setConfirmStock(null)}><div className="salary-modal confirm-dialog" onClick={e=>e.stopPropagation()}><div className="confirm-icon"><AlertTriangle size={22}/></div><h3>Delete ready stock entry?</h3><p>This permanently removes <strong>{confirmStock.school}</strong> · <strong>{confirmStock.garment} (size {confirmStock.size})</strong> × <strong>{confirmStock.count} pcs</strong> from school ready stock. This action cannot be undone.</p><div className="salary-modal-actions"><button className="outline" onClick={()=>setConfirmStock(null)}>Cancel</button><button className="danger-btn" onClick={confirmDeleteSchoolStock}><Trash2 size={14}/> Yes, delete entry</button></div></div></div>}
     {previewInvoice&&<PrintPreview doc={<InvoiceDocument invoice={previewInvoice} company={company} garment/>} onClose={()=>setPreviewInvoice(null)}/>}
+    {showBarcodeScanner&&<BarcodeScannerModal onScan={scanForSale?handleSaleBarcodeScan:handleBarcodeScanResult} onClose={()=>{setShowBarcodeScanner(false);setScanForSale(false)}}/>}
+    {printBarcodes&&<PrintPreview doc={<BarcodePrintDocument barcodes={printBarcodes} company={company}/>} onClose={()=>setPrintBarcodes(null)}/>}
   </section>;
+}
+
+function BarcodePrintDocument({barcodes,company}:{barcodes:SchoolBarcode[];company:CompanySettings}){
+  const isSingle=barcodes.length===1;
+  return <div className="barcode-print-page">
+    <div className="barcode-print-header">
+      <h2>{company.name||'Teli Apparels'}</h2>
+      <p>School Dress Barcode Tag Labels — {barcodes.length} {isSingle?'label':'labels'} (Cut / Tear along dashed lines)</p>
+    </div>
+    <div className={'barcode-print-grid'+(isSingle?' single':'')}>
+      {barcodes.map(b=><div key={b.id} className="barcode-print-card">
+        <div className="barcode-print-info">
+          <strong>{b.school}</strong>
+          <div className="garment-tag-meta">
+            <span className="badge">{b.gender}</span>
+            <span>{b.garmentType}</span>
+            <span>· Size {b.size}</span>
+          </div>
+          <span className="garment-tag-year">Year: {b.year||'2026-27'}{b.shortTime?' · '+b.shortTime:''}</span>
+        </div>
+        <div className="barcode-print-svg"><BarcodeImage value={b.barcode} width={3} height={45} fontSize={10}/></div>
+        <div className="barcode-print-code">{b.barcode}</div>
+      </div>)}
+    </div>
+  </div>;
 }

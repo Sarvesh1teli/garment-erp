@@ -115,6 +115,9 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
       joining_date TEXT NOT NULL,
       employee_type TEXT NOT NULL,
       status TEXT NOT NULL,
+      salary_type TEXT NOT NULL DEFAULT 'Piece Rate',
+      monthly_salary REAL NOT NULL DEFAULT 0,
+      daily_rate REAL NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -176,6 +179,11 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
       net_payable REAL NOT NULL DEFAULT 0,
       closing_advance REAL NOT NULL DEFAULT 0,
       pieces REAL NOT NULL DEFAULT 0,
+      worked_days REAL NOT NULL DEFAULT 0,
+      salary_type TEXT NOT NULL DEFAULT 'Piece Rate',
+      leave_days REAL NOT NULL DEFAULT 0,
+      leave_deduction_mode TEXT NOT NULL DEFAULT 'None',
+      leave_deduction_amount REAL NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -354,6 +362,15 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS attendance (
+      id TEXT PRIMARY KEY,
+      date TEXT NOT NULL,
+      employee_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      remarks TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS media_assets (
       id TEXT PRIMARY KEY,
       school_id TEXT,
@@ -385,6 +402,18 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
   })) ensureColumn('delivery_challans', column, definition);
   ensureColumn('ready_school_stock', 'date', "TEXT NOT NULL DEFAULT ''");
   ensureColumn('students', 'year', "TEXT NOT NULL DEFAULT ''");
+  for (const [column, definition] of Object.entries({
+    salary_type: "TEXT NOT NULL DEFAULT 'Piece Rate'",
+    monthly_salary: "REAL NOT NULL DEFAULT 0",
+    daily_rate: "REAL NOT NULL DEFAULT 0",
+  })) ensureColumn('employees', column, definition);
+  for (const [column, definition] of Object.entries({
+    worked_days: "REAL NOT NULL DEFAULT 0",
+    salary_type: "TEXT NOT NULL DEFAULT 'Piece Rate'",
+    leave_days: "REAL NOT NULL DEFAULT 0",
+    leave_deduction_mode: "TEXT NOT NULL DEFAULT 'None'",
+    leave_deduction_amount: "REAL NOT NULL DEFAULT 0",
+  })) ensureColumn('salary_payments', column, definition);
   const studentIndexes = database.prepare("PRAGMA index_list('students')").all();
   if (studentIndexes.some(index => index.name === 'sqlite_autoindex_students_2')) {
     database.exec('BEGIN IMMEDIATE');
@@ -530,7 +559,7 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     return { id, schoolId, category, filename: path.basename(String(filename)), mimeType, fileSize: buffer.length, sha256: checksum, url: `/api/media/${id}` };
   }
 
-  const backupTables = ['app_state', 'customers', 'schools', 'students', 'employees', 'work_types', 'work_assignments', 'work_entries', 'salary_advances', 'salary_payments', 'inventory_items', 'stock_receipts', 'stock_issues', 'expense_vendors', 'expense_categories', 'expenses', 'company_settings', 'module_settings', 'school_collections', 'invoices', 'invoice_payments', 'delivery_challans', 'ready_school_stock', 'media_assets'];
+  const backupTables = ['app_state', 'customers', 'schools', 'students', 'employees', 'work_types', 'work_assignments', 'work_entries', 'salary_advances', 'salary_payments', 'inventory_items', 'stock_receipts', 'stock_issues', 'expense_vendors', 'expense_categories', 'expenses', 'company_settings', 'module_settings', 'school_collections', 'invoices', 'invoice_payments', 'delivery_challans', 'ready_school_stock', 'media_assets', 'attendance'];
   const backupCountStatements = Object.fromEntries(backupTables.map(table => [table, database.prepare(`SELECT COUNT(*) AS count FROM ${table}`)]));
   const backupId = () => {
     const date = new Date();
@@ -820,11 +849,11 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     },
     employees: {
       legacyKey: 'garment-employees',
-      select: database.prepare('SELECT id, name, mobile, address, joining_date, employee_type, status FROM employees ORDER BY rowid'),
+      select: database.prepare('SELECT id, name, mobile, address, joining_date, employee_type, status, salary_type, monthly_salary, daily_rate FROM employees ORDER BY rowid'),
       clear: database.prepare('DELETE FROM employees'),
-      insert: database.prepare('INSERT INTO employees (id, name, mobile, address, joining_date, employee_type, status) VALUES (?, ?, ?, ?, ?, ?, ?)'),
-      fromRows: rows => rows.map(row => ({ id: row.id, name: row.name, mobile: row.mobile, address: row.address, joiningDate: row.joining_date, type: row.employee_type, status: row.status })),
-      insertRow: row => [row.id, row.name, row.mobile, row.address, row.joiningDate, row.type, row.status],
+      insert: database.prepare('INSERT INTO employees (id, name, mobile, address, joining_date, employee_type, status, salary_type, monthly_salary, daily_rate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
+      fromRows: rows => rows.map(row => ({ id: row.id, name: row.name, mobile: row.mobile, address: row.address, joiningDate: row.joining_date, type: row.employee_type, status: row.status, salaryType: row.salary_type || 'Piece Rate', monthlySalary: Number(row.monthly_salary) || 0, dailyRate: Number(row.daily_rate) || 0 })),
+      insertRow: row => [row.id, row.name, row.mobile || '', row.address || '', row.joiningDate || '', row.type || 'Staff', row.status || 'Active', row.salaryType || 'Piece Rate', Number(row.monthlySalary) || 0, Number(row.dailyRate) || 0],
     },
     'work-types': {
       legacyKey: 'garment-work-types',
@@ -860,11 +889,11 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     },
     'salary-payments': {
       legacyKey: 'garment-salary-history',
-      select: database.prepare('SELECT id, paid_date, employee_id, period_from, period_to, recover, payment_mode, remarks, gross, opening_advance, advance_during, pending_advance, net_payable, closing_advance, pieces FROM salary_payments ORDER BY rowid'),
+      select: database.prepare('SELECT id, paid_date, employee_id, period_from, period_to, recover, payment_mode, remarks, gross, opening_advance, advance_during, pending_advance, net_payable, closing_advance, pieces, worked_days, salary_type, leave_days, leave_deduction_mode, leave_deduction_amount FROM salary_payments ORDER BY rowid'),
       clear: database.prepare('DELETE FROM salary_payments'),
-      insert: database.prepare('INSERT INTO salary_payments (id, paid_date, employee_id, period_from, period_to, recover, payment_mode, remarks, gross, opening_advance, advance_during, pending_advance, net_payable, closing_advance, pieces) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
-      fromRows: rows => rows.map(row => ({ id: row.id, paidDate: row.paid_date, employeeId: row.employee_id, from: row.period_from, to: row.period_to, recover: Number(row.recover), mode: row.payment_mode, remarks: row.remarks, gross: Number(row.gross), openingAdvance: Number(row.opening_advance), advanceDuring: Number(row.advance_during), pendingAdvance: Number(row.pending_advance), netPayable: Number(row.net_payable), closingAdvance: Number(row.closing_advance), pieces: Number(row.pieces) })),
-      insertRow: row => [row.id, row.paidDate, row.employeeId, row.from, row.to, Number(row.recover) || 0, row.mode, row.remarks || '', Number(row.gross) || 0, Number(row.openingAdvance) || 0, Number(row.advanceDuring) || 0, Number(row.pendingAdvance) || 0, Number(row.netPayable) || 0, Number(row.closingAdvance) || 0, Number(row.pieces) || 0],
+      insert: database.prepare('INSERT INTO salary_payments (id, paid_date, employee_id, period_from, period_to, recover, payment_mode, remarks, gross, opening_advance, advance_during, pending_advance, net_payable, closing_advance, pieces, worked_days, salary_type, leave_days, leave_deduction_mode, leave_deduction_amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
+      fromRows: rows => rows.map(row => ({ id: row.id, paidDate: row.paid_date, employeeId: row.employee_id, from: row.period_from, to: row.period_to, recover: Number(row.recover), mode: row.payment_mode, remarks: row.remarks, gross: Number(row.gross), openingAdvance: Number(row.opening_advance), advanceDuring: Number(row.advance_during), pendingAdvance: Number(row.pending_advance), netPayable: Number(row.net_payable), closingAdvance: Number(row.closing_advance), pieces: Number(row.pieces), workedDays: Number(row.worked_days) || 0, salaryType: row.salary_type || 'Piece Rate', leaveDays: Number(row.leave_days) || 0, leaveDeductionMode: row.leave_deduction_mode || 'None', leaveDeductionAmount: Number(row.leave_deduction_amount) || 0 })),
+      insertRow: row => [row.id, row.paidDate, row.employeeId, row.from, row.to, Number(row.recover) || 0, row.mode, row.remarks || '', Number(row.gross) || 0, Number(row.openingAdvance) || 0, Number(row.advanceDuring) || 0, Number(row.pendingAdvance) || 0, Number(row.netPayable) || 0, Number(row.closingAdvance) || 0, Number(row.pieces) || 0, Number(row.workedDays) || 0, row.salaryType || 'Piece Rate', Number(row.leaveDays) || 0, row.leaveDeductionMode || 'None', Number(row.leaveDeductionAmount) || 0],
     },
     'inventory-items': {
       legacyKey: 'garment-inventory-items',
@@ -956,6 +985,14 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
         ? [row[0],row[1],row[2],'','','','','','',row[3],numericValue(row[4]),String(row[4]).replace(/^[-\d.,\s]+/,'').trim(),row[4], '',row[5]||'Ready']
         : [row.challanNo,row.date,row.customer,row.phone||'',row.address||'',row.gst||'',row.vehicle||'',row.driver||'',row.deliveryMode||'',row.product,numericValue(row.qty),row.unit||'',`${numericValue(row.qty)} ${row.unit||''}`.trim(),row.remarks||'',row.status||'Ready'],
     },
+    attendance: {
+      legacyKey: 'garment-attendance',
+      select: database.prepare('SELECT id, date, employee_id, status, remarks FROM attendance ORDER BY date, employee_id'),
+      clear: database.prepare('DELETE FROM attendance'),
+      insert: database.prepare('INSERT INTO attendance (id, date, employee_id, status, remarks) VALUES (?, ?, ?, ?, ?)'),
+      fromRows: rows => rows.map(row => ({ id: row.id || `ATT-${row.date}-${row.employee_id}`, date: row.date, employeeId: row.employee_id, status: row.status, remarks: row.remarks })),
+      insertRow: row => [row.id || `ATT-${row.date}-${row.employeeId}`, row.date, row.employeeId, row.status, row.remarks || ''],
+    },
   };
 
   function replaceDomain(domain, values) {
@@ -1001,6 +1038,15 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     const url = new URL(request.url || '/', `http://${request.headers.host || '127.0.0.1'}`);
     if (url.pathname === '/api/health' && request.method === 'GET') {
       return json(response, 200, { status: 'ok', database: 'sqlite' });
+    }
+
+    if (url.pathname === '/cert.pem' && request.method === 'GET') {
+      const certFile = path.join(__dirname, '..', '.https', 'cert.pem');
+      if (fs.existsSync(certFile)) {
+        response.writeHead(200, { 'Content-Type': 'application/x-pem-file', 'Access-Control-Allow-Origin': '*' });
+        return fs.createReadStream(certFile).pipe(response);
+      }
+      return json(response, 404, { message: 'Certificate not found. Run npm run dev:https first.' });
     }
 
     if(url.pathname==='/api/bootstrap'&&request.method==='GET')return json(response,200,{data:{subscription:subscriptionView(),hasUser:Number(countUsers.get().count)>0}});
@@ -1201,7 +1247,7 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
       return json(response, 405, { message: 'Method not allowed' });
     }
 
-    const domainMatch = url.pathname.match(/^\/api\/(customers|schools|students|employees|work-types|assignments|work-entries|advances|salary-payments|inventory-items|stock-receipts|stock-issues|expense-vendors|expense-categories|expenses|school-collections|invoices|invoice-payments|delivery-challans)$/);
+    const domainMatch = url.pathname.match(/^\/api\/(customers|schools|students|employees|work-types|assignments|work-entries|advances|salary-payments|inventory-items|stock-receipts|stock-issues|expense-vendors|expense-categories|expenses|school-collections|invoices|invoice-payments|delivery-challans|attendance)$/);
     if (domainMatch) {
       const domain = domains[domainMatch[1]];
       if (request.method === 'GET') {
@@ -1259,7 +1305,7 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
 
   return new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(port, '127.0.0.1', () => resolve({ server, database, port }));
+    server.listen(port, '0.0.0.0', () => resolve({ server, database, port }));
   });
 }
 

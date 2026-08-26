@@ -3,7 +3,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { WorkType } from './types';
 
 export const money=(value:number)=>`Rs. ${value.toLocaleString('en-IN')}`;
-export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:47831').replace(/\/$/, '');
+export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' && window.location.protocol !== 'file:' ? `http://${window.location.hostname}:47831` : 'http://127.0.0.1:47831')).replace(/\/$/, '');
 const DOMAIN_ENDPOINTS:Record<string,string>={
   'garment-customers':'customers',
   'garment-schools':'schools',
@@ -26,6 +26,7 @@ const DOMAIN_ENDPOINTS:Record<string,string>={
   'garment-invoices':'invoices',
   'garment-invoice-payments':'invoice-payments',
   'garment-delivery-challans':'delivery-challans',
+  'garment-attendance':'attendance',
 };
 const stateEndpoint=(key:string)=>DOMAIN_ENDPOINTS[key]
   ?`${API_BASE_URL}/api/${DOMAIN_ENDPOINTS[key]}`
@@ -87,7 +88,7 @@ export function useStoredState<T>(key:string,initialValue:T){
     const next=typeof update==='function'?(update as (current:T)=>T)(latest.current):update;
     latest.current=next;
     publishState(key,next);
-    const onError=(error:unknown)=>{console.error(error);window.alert(error instanceof Error?error.message:`Unable to save ${key}. Your latest changes were not stored.`)};
+    const onError=(error:unknown)=>{console.error(`Unable to save ${key}:`,error);};
     saveState(key,next).catch(onError);
   },[key]);
 

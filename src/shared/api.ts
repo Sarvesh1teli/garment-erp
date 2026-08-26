@@ -1,4 +1,4 @@
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:47831').replace(/\/$/, '');
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' && window.location.protocol !== 'file:' ? `http://${window.location.hostname}:47831` : 'http://127.0.0.1:47831')).replace(/\/$/, '');
 
 const fileAsDataUrl = (file:File) => new Promise<string>((resolve,reject)=>{
   const reader=new FileReader();

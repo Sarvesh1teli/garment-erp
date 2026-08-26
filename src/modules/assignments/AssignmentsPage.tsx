@@ -36,7 +36,7 @@ export function AssignmentsPage({employees,workTypes,customers,assignments,setAs
   const activeWorkTypes=workTypes.filter(w=>w.status==='Active');
   const activeCustomers=customers.filter(c=>(c[5]||'Active')==='Active');
   const customerOptions=(()=>{const list=[...activeCustomers];const current=customers.find(c=>c[0]===form.customerId);if(current&&!list.some(c=>c[0]===current[0]))list.push(current);return list.map(c=><option value={c[0]} key={c[0]}>{c[1]}</option>)})();
-  useEffect(()=>{const close=()=>setMenuPos(null);window.addEventListener('click',close);return()=>window.removeEventListener('click',close)},[]);
+  useEffect(()=>{const close=()=>setMenuPos(null);window.addEventListener('click',close);window.addEventListener('pointerdown',close);return()=>{window.removeEventListener('click',close);window.removeEventListener('pointerdown',close);}},[]);
   const rows=assignments.filter(a=>{const text=[a.id,a.cuttingNo,nameOf(employees,a.employeeId),customerName(customers,a.customerId),a.remarks].join(' ').toLowerCase();return text.includes(search.toLowerCase())&&(statusFilter==='All'||statusOf(a)===statusFilter)});
   const totalPieces=assignments.reduce((s,a)=>s+workTotal(a),0);
   const donePieces=assignments.reduce((s,a)=>s+workDone(a),0);

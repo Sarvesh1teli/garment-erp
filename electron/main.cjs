@@ -7,6 +7,10 @@ let mainWindow;
 const hasLock = app.requestSingleInstanceLock();
 if (!hasLock) app.quit();
 
+if (process.env.VITE_HTTPS === 'true') {
+  app.commandLine.appendSwitch('ignore-certificate-errors');
+}
+
 const createWindow = () => {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -27,7 +31,8 @@ const createWindow = () => {
   const showFallback = setTimeout(() => { if (mainWindow && !mainWindow.isVisible()) mainWindow.show(); }, 5000);
   mainWindow.once('show', () => clearTimeout(showFallback));
   const dev = !app.isPackaged;
-  dev ? mainWindow.loadURL('http://localhost:5173') : mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+  const devUrl = process.env.VITE_HTTPS === 'true' ? 'https://localhost:5173' : 'http://localhost:5173';
+  dev ? mainWindow.loadURL(devUrl) : mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   mainWindow.on('closed', () => { mainWindow = null; });
 };
 
