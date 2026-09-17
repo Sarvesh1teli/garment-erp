@@ -5,7 +5,10 @@ const { startLocalApi } = require('./local-api.cjs');
 
 let mainWindow;
 const hasLock = app.requestSingleInstanceLock();
-if (!hasLock) app.quit();
+if (!hasLock) {
+  app.quit();
+  return;
+}
 
 if (process.env.VITE_HTTPS === 'true') {
   app.commandLine.appendSwitch('ignore-certificate-errors');
@@ -45,9 +48,24 @@ ipcMain.handle('save-pdf', async (event) => {
     filters: [{ name: 'PDF', extensions: ['pdf'] }],
   });
   if (canceled || !filePath) return { saved: false };
-  const data = await win.webContents.printToPDF({ printBackground: true, pageSize: 'A4', preferCSSPageSize: true, scale: 1, printHeaderFooter: false });
-  fs.writeFileSync(filePath, data);
-  return { saved: true, filePath };
+
+  try {
+    try { await win.webContents.emulateMediaType('print'); } catch {}
+    await new Promise(resolve => setTimeout(resolve, 250));
+    const data = await win.webContents.printToPDF({
+      printBackground: true,
+      pageSize: 'A4',
+      preferCSSPageSize: true,
+      printHeaderFooter: false,
+    });
+    fs.writeFileSync(filePath, data);
+    return { saved: true, filePath };
+  } finally {
+    try { await win.webContents.emulateMediaType(null); } catch {}
+    if (win && !win.isDestroyed()) {
+      win.focus();
+    }
+  }
 });
 
 if (hasLock) {
@@ -62,17 +80,22 @@ if (hasLock) {
       await startLocalApi({ dataDirectory: app.getPath('userData') });
       createWindow();
     } catch (error) {
-      if (error?.code === 'EADDRINUSE') {
-        try {
-          const response = await fetch('http://127.0.0.1:47831/api/health');
-          const health = await response.json();
-          if (response.ok && health?.status === 'ok' && health?.database === 'sqlite') {
-            createWindow();
-            return;
-          }
-        } catch { /* handled below */ }
-      }
-      dialog.showErrorBox('Teli ThreadFlow ERP could not start', error?.code === 'EADDRINUSE' ? 'Local port 47831 is being used by another program. Close the other program and open ThreadFlow again.' : String(error?.message || error));
+      try {
+        const response = await fetch('http://127.0.0.1:47831/api/health');
+        const health = await response.json();
+        if (response.ok && health?.status === 'ok' && health?.database === 'sqlite') {
+          createWindow();
+          return;
+        }
+      } catch { /* API not active */ }
+
+      const isPortInUse = error?.code === 'EADDRINUSE';
+      const isDiskIoErr = String(error?.message || error).toLowerCase().includes('disk i/o');
+      const errorDetail = isPortInUse || isDiskIoErr
+        ? 'Another instance of Teli ThreadFlow ERP is already running in the background.\n\nPlease open Task Manager (Ctrl + Shift + Esc), close any lingering ThreadFlow / electron.exe processes, and open ThreadFlow again.'
+        : String(error?.message || error);
+
+      dialog.showErrorBox('Teli ThreadFlow ERP could not start', errorDetail);
       app.quit();
     }
   });

@@ -13,9 +13,15 @@
     "desktop:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "desktop:dev:https": "node electron/generate-cert.cjs && cross-env VITE_HTTPS=true concurrently \"vite\" \"wait-on https-get://localhost:5173 && electron .\"",
     "desktop:unpacked": "npm run build && electron-builder --win --dir",
-    "desktop:installer": "npm run build && electron-builder --win nsis"
+    "desktop:installer": "npm run build && electron-builder --win nsis",
+    "cap:add": "npx cap add android",
+    "cap:sync": "npm run build && npx cap sync android",
+    "cap:open": "npx cap open android"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.1",
+    "@capacitor/cli": "^8.5.1",
+    "@capacitor/core": "^8.5.1",
     "html5-qrcode": "^2.3.8",
     "jsbarcode": "^3.12.3",
     "qrcode.react": "^4.2.0"

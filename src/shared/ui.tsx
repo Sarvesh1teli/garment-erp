@@ -2,7 +2,7 @@ import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Camera, Factory, IndianRupee, Printer, Save, Scissors, ShieldAlert, StopCircle, Users, X } from 'lucide-react';
 import type { CompanySettings } from '../modules/settings/SettingsPage';
-import { printPage, savePdf, API_BASE_URL } from './utils';
+import { cleanupPrintClasses, printPage, savePdf, API_BASE_URL } from './utils';
 import { QRCodeSVG } from 'qrcode.react';
 import type { Html5Qrcode } from 'html5-qrcode';
 
@@ -173,4 +173,62 @@ export function CompanyReceiptHeader({company}:{company:CompanySettings}){return
 export function SalaryPrintHeader({company}:{company:CompanySettings}){return <div className="doc-company company-print-header salary-print-header"><div className="salary-left-logo">{company.logo&&<img className="salary-garment-logo" src={company.logo} alt="Teli Apparels logo"/>}</div><div className="salary-garment-text"><h2>{company.name||'Garment Name'}</h2>{company.address&&<p>{company.address}</p>}<p>{company.gst&&`GSTIN: ${company.gst}`}{company.gst&&company.phone?' | ':''}{company.phone&&`Phone: ${company.phone}`}</p></div></div>}
 export function GarmentPrintHeader({company,garment}:{company:CompanySettings;garment?:string}){return <div className="doc-company company-print-header garment-print-header clean-header">{company.logo&&<img className="company-logo-left" src={company.logo} alt="Garment logo"/>}<div className="garment-text"><h2>{company.name||garment||'Teli Apparels'}</h2>{company.address&&<p>{company.address}</p>}<p>{company.gst&&`GSTIN: ${company.gst}`}{company.gst&&company.phone?' | ':''}{company.phone&&`Phone: ${company.phone}`}</p></div></div>}
 export function SalaryPrintFooter(){return <div className="salary-print-footer"><img className="footer-threadflow-logo" src="./threadflow-logo.png" alt="ThreadFlow logo"/><div className="footer-text"><span>Powered by <strong>Teli Threadflow</strong></span><span>Contact: 9880306309</span></div></div>}
-export function PrintPreview({doc,onClose,extra}:{doc:React.ReactNode;onClose:()=>void;extra?:React.ReactNode}){return <div className="print-preview-overlay"><div className="print-preview-shell invoice-preview"><div className="preview-actions"><button className="primary" onClick={printPage}><Printer size={16}/> Print</button><button className="outline" onClick={()=>savePdf()}><Save size={16}/> Save PDF</button>{extra}<button className="outline" onClick={onClose}>Cancel</button></div>{doc}</div></div>}
+export function PrintPreview({doc,onClose,extra}:{doc:React.ReactNode;onClose:()=>void;extra?:React.ReactNode}){
+  const [saveStatus,setSaveStatus]=useState<string>('');
+  const handleClose=useCallback(()=>{
+    cleanupPrintClasses();
+    onClose();
+  },[onClose]);
+
+  const handleSavePdf=async()=>{
+    const saved=await savePdf();
+    if(saved){
+      setSaveStatus('PDF saved successfully!');
+      setTimeout(()=>setSaveStatus(''),3500);
+    }
+  };
+
+  useEffect(()=>{
+    if(typeof document!=='undefined'){
+      document.body.classList.add('printing-preview');
+    }
+    const handleKeyDown=(e:KeyboardEvent)=>{
+      if(e.key==='Escape'){
+        handleClose();
+      }
+    };
+    window.addEventListener('keydown',handleKeyDown);
+    return()=>{
+      window.removeEventListener('keydown',handleKeyDown);
+      cleanupPrintClasses();
+    };
+  },[handleClose]);
+
+  return (
+    <div
+      className="print-preview-overlay"
+      onClick={(e)=>{
+        if(e.target===e.currentTarget){
+          handleClose();
+        }
+      }}
+    >
+      {saveStatus&&<div className="toast" style={{zIndex:9999}}><span className="toast-dot"/>{saveStatus}</div>}
+      <div className="print-preview-shell invoice-preview" onClick={e=>e.stopPropagation()}>
+        <div className="preview-actions no-print">
+          <button className="primary" onClick={printPage}><Printer size={16}/> Print</button>
+          <button className="outline" onClick={handleSavePdf}><Save size={16}/> Save PDF</button>
+          {extra}
+          <button className="outline" onClick={handleClose}><X size={16}/> Cancel</button>
+        </div>
+        {doc}
+        <div className="preview-actions no-print" style={{marginTop:24,paddingTop:16,borderTop:'1px solid #e0e8e5',display:'flex',justifyContent:'flex-end',gap:10}}>
+          <button className="primary" onClick={printPage}><Printer size={16}/> Print</button>
+          <button className="outline" onClick={handleSavePdf}><Save size={16}/> Save PDF</button>
+          {extra}
+          <button className="outline" onClick={handleClose}><X size={16}/> Close Preview</button>
+        </div>
+      </div>
+    </div>
+  );
+}

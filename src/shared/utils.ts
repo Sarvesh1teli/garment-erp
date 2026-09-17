@@ -3,7 +3,29 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { WorkType } from './types';
 
 export const money=(value:number)=>`Rs. ${value.toLocaleString('en-IN')}`;
-export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' && window.location.protocol !== 'file:' ? `http://${window.location.hostname}:47831` : 'http://127.0.0.1:47831')).replace(/\/$/, '');
+export function getApiBaseUrl(): string {
+  if (typeof window !== 'undefined') {
+    const override = localStorage.getItem('garment_api_url_override');
+    if (override && override.trim()) {
+      const normalized=override.trim().replace(/\/$/, '').replace(/\/api$/i, '');
+      if(normalized!==override.trim().replace(/\/$/, ''))localStorage.setItem('garment_api_url_override',normalized);
+      return normalized;
+    }
+  }
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '');
+  }
+  if (typeof window !== 'undefined' && window.location.protocol !== 'file:') {
+    const isHttps = window.location.protocol === 'https:';
+    if (isHttps || window.location.hostname === 'garment.telicampus.in') {
+      return `${window.location.protocol}//${window.location.hostname}`;
+    }
+    return `http://${window.location.hostname}:47831`;
+  }
+  return 'http://127.0.0.1:47831';
+}
+
+export const API_BASE_URL = getApiBaseUrl();
 const DOMAIN_ENDPOINTS:Record<string,string>={
   'garment-customers':'customers',
   'garment-schools':'schools',
@@ -34,18 +56,63 @@ const stateEndpoint=(key:string)=>DOMAIN_ENDPOINTS[key]
 const stateCache=new Map<string,unknown>();
 const stateListeners=new Map<string,Set<(value:unknown)=>void>>();
 
+export function getStoredTenantId(): string {
+  if (typeof window === 'undefined') return 'default';
+  try {
+    const s = sessionStorage.getItem('garment_session') || localStorage.getItem('garment_session');
+    if (s) {
+      const p = JSON.parse(s);
+      const tid = p.tenantId || p.currentUser?.email?.toLowerCase();
+      if (tid === 'admin' || tid === 'default') return 'default';
+      return tid || 'default';
+    }
+  } catch {}
+  return 'default';
+}
+
 function publishState<T>(key:string,value:T){
-  stateCache.set(key,value);
+  const tenantId = getStoredTenantId();
+  stateCache.set(`${tenantId}:${key}`,value);
+  try {
+    if (typeof window !== 'undefined') localStorage.setItem(`garment_data_${tenantId}_${key}`, JSON.stringify(value));
+  } catch {}
   stateListeners.get(key)?.forEach(listener=>listener(value));
 }
 
 async function saveState<T>(key:string,value:T){
-  const response=await fetch(stateEndpoint(key),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(value)});
-  if(!response.ok)throw new Error(`Unable to save ${key}`);
+  const tenantId = getStoredTenantId();
+  try {
+    const response=await fetch(stateEndpoint(key),{
+      method:'PUT',
+      headers:{'Content-Type':'application/json', 'X-Tenant-ID': tenantId},
+      body:JSON.stringify(value)
+    });
+    if(!response.ok)throw new Error(`Unable to save backend state for ${key}`);
+  } catch (err) {
+    console.warn(`Backend state save error for ${key}:`, err);
+    throw err;
+  }
 }
 
 export function useStoredState<T>(key:string,initialValue:T){
-  const [value,setValue]=useState<T>(()=>stateCache.has(key)?stateCache.get(key) as T:initialValue);
+  const [value,setValue]=useState<T>(()=>{
+    const tenantId = getStoredTenantId();
+    const cacheKey = `${tenantId}:${key}`;
+    if (stateCache.has(cacheKey)) return stateCache.get(cacheKey) as T;
+    try {
+      const local = typeof window !== 'undefined'
+        ? (localStorage.getItem(`garment_data_${tenantId}_${key}`) || (tenantId === 'default' ? localStorage.getItem(`garment_data_${key}`) : null))
+        : null;
+      if (local) {
+        const parsed = JSON.parse(local);
+        if (parsed !== null && parsed !== undefined && (Array.isArray(parsed) ? parsed.length > 0 : true)) {
+          stateCache.set(cacheKey, parsed);
+          return parsed;
+        }
+      }
+    } catch {}
+    return initialValue;
+  });
   const latest=useRef(value);
   const changedLocally=useRef(false);
   latest.current=value;
@@ -66,21 +133,26 @@ export function useStoredState<T>(key:string,initialValue:T){
 
   useEffect(()=>{
     let active=true;
-    fetch(stateEndpoint(key))
+    const tenantId = getStoredTenantId();
+    const loadCloudState=()=>fetch(stateEndpoint(key), {headers: { 'X-Tenant-ID': tenantId }})
       .then(async response=>{
-        if(response.status===404)return initialValue;
+        if(response.status===404)return null;
         if(!response.ok)throw new Error(`Unable to load ${key}`);
         const body=await response.json() as {data:T};
         return body.data;
       })
       .then(data=>{
-        if(!active)return;
-        // Never let a slower startup response overwrite a change the user
-        // made while hydration was still in progress.
+        if(!active || !data)return;
         if(!changedLocally.current)publishState(key,data);
       })
       .catch(console.error);
-    return()=>{active=false};
+    loadCloudState();
+    const onFocus=()=>loadCloudState();
+    const onVisibility=()=>{if(document.visibilityState==='visible')loadCloudState()};
+    window.addEventListener('focus',onFocus);
+    document.addEventListener('visibilitychange',onVisibility);
+    const timer=window.setInterval(()=>{if(document.visibilityState==='visible')loadCloudState()},15000);
+    return()=>{active=false;window.removeEventListener('focus',onFocus);document.removeEventListener('visibilitychange',onVisibility);window.clearInterval(timer)};
   },[key]);
 
   const updateValue=useCallback<Dispatch<SetStateAction<T>>>(update=>{
@@ -89,19 +161,58 @@ export function useStoredState<T>(key:string,initialValue:T){
     latest.current=next;
     publishState(key,next);
     const onError=(error:unknown)=>{console.error(`Unable to save ${key}:`,error);};
-    saveState(key,next).catch(onError);
+    saveState(key,next).then(()=>{changedLocally.current=false}).catch(onError);
   },[key]);
 
   return [value,updateValue] as const;
 }
 export const workTypeCode=(workType:WorkType)=>workType.code||String(Number(workType.id.replace(/\D/g,''))||'');
 export const inRange=(date:string,from:string,to:string)=>date>=from&&date<=to;
-export const printPage=()=>{document.body.classList.add('printing-preview');window.print();setTimeout(()=>document.body.classList.remove('printing-preview'),300);};
-export const savePdf=async()=>{
-  const hasPreview=document.body.classList.contains('printing-preview');
+
+export const cleanupPrintClasses=()=>{
+  if(typeof document!=='undefined'){
+    document.body.classList.remove('printing-preview');
+  }
+};
+
+export const printPage=()=>{
+  if(typeof document==='undefined')return;
   document.body.classList.add('printing-preview');
+  const onAfterPrint=()=>{
+    cleanupPrintClasses();
+    window.removeEventListener('afterprint',onAfterPrint);
+  };
+  window.addEventListener('afterprint',onAfterPrint,{once:true});
   try{
-    if(window.threadflow?.savePdf){const result=await window.threadflow.savePdf();if(result?.saved){window.alert(`PDF saved to ${result.filePath}`)}return result?.saved??false}
-    window.print();return false;
-  }finally{if(!hasPreview)setTimeout(()=>document.body.classList.remove('printing-preview'),300);}
+    window.print();
+  }finally{
+    setTimeout(cleanupPrintClasses,500);
+  }
+};
+
+export const savePdf=async()=>{
+  if(typeof document==='undefined')return false;
+  document.body.classList.add('printing-preview');
+  const onAfterPrint=()=>{
+    cleanupPrintClasses();
+    window.removeEventListener('afterprint',onAfterPrint);
+  };
+  window.addEventListener('afterprint',onAfterPrint,{once:true});
+  try{
+    if(window.threadflow?.savePdf){
+      const result=await window.threadflow.savePdf();
+      cleanupPrintClasses();
+      if(result?.saved){
+        console.log(`PDF saved to ${result.filePath}`);
+      }
+      return result?.saved??false;
+    }
+    window.print();
+    return false;
+  }catch(err){
+    console.error('Error in savePdf:',err);
+    return false;
+  }finally{
+    setTimeout(cleanupPrintClasses,500);
+  }
 };

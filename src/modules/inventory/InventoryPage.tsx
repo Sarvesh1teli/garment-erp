@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Boxes, Camera, FileText, GraduationCap, ListPlus, Pencil, Plus, Printer, Save, ShoppingBag, Trash2, Truck, Users, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, ArrowLeft, Boxes, Camera, FileText, GraduationCap, ListPlus, Pencil, Plus, Printer, Save, ShoppingBag, Trash2, Truck, Users, X } from 'lucide-react';
 import type { CompanySettings } from '../settings/SettingsPage';
-import type { CustomerStock, Invoice, School, SchoolBarcode, SchoolStock, StockSale } from '../../shared/types';
+import type { CustomerStock, Invoice, School, SchoolBarcode, SchoolStock, StockSale, Student } from '../../shared/types';
 import { InvoiceDocument } from '../billing/BillingPaymentsPage';
 import { PrintPreview, BarcodeImage, BarcodeScannerModal, Stats, Table } from '../../shared/ui';
-import { money, useStoredState, API_BASE_URL } from '../../shared/utils';
+import { API_BASE_URL, getStoredTenantId, money, useStoredState } from '../../shared/utils';
+import { SmsComposerModal, type SmsDraft } from '../../shared/SmsComposerModal';
+import { formatStockOutSms, sendSmsViaGateway } from '../../shared/sms';
 
 type InventoryItem=[string,string,string,string,string]|[string,string,string,string];
 type StockInRow=[string,string,string,string,string,string,string]|[string,string,string,string,string,string];
@@ -15,7 +17,7 @@ type StockOutTab='general'|'school'|'customer';
 type StockView='material'|'school'|'customer';
 type PartyKind='School'|'Customer';
 type PartyForm={type:PartyKind;date:string;party:string;gender:string;className:string;garment:string;size:string;count:number;remarks:string;customGarment:string;customSize:string};
-type SaleForm={type:PartyKind;date:string;party:string;gender:string;garment:string;size:string;count:number;rate:number;remarks:string;customGarment:string;customSize:string;invoiceNo:string};
+type SaleForm={type:PartyKind;date:string;party:string;gender:string;garment:string;size:string;count:number;rate:number|string;remarks:string;customGarment:string;customSize:string;invoiceNo:string};
 
 const defaultItems:InventoryItem[]=[];
 const defaultStockIn:StockInRow[]=[];
@@ -28,11 +30,14 @@ const sortSizes=(a:string,b:string)=>{const na=Number(a),nb=Number(b);if(!Number
 const emptyPartyForm=():PartyForm=>({type:'School',date:today(),party:'',gender:'Boys',className:'',garment:defaultGarments[0],size:'',count:0,remarks:'',customGarment:'',customSize:''});
 const emptySaleForm=():SaleForm=>({type:'School',date:today(),party:'',gender:'Boys',garment:'',size:'',count:0,rate:0,remarks:'',customGarment:'',customSize:'',invoiceNo:''});
 
-export function InventoryPage({company,customers,schools}:{company:CompanySettings;customers:string[][];schools:School[]}){
+export function InventoryPage({company,customers,schools,navParams,onNavigate}:{company:CompanySettings;customers:string[][];schools:School[];navParams?:Record<string,unknown>|null;onNavigate?:(page:string,params?:Record<string,unknown>)=>void}){
   const [tab,setTab]=useState<InventoryTab>('stock');
   const [stockView,setStockView]=useState<StockView>('material');
   const [inTab,setInTab]=useState<StockInTab>('add');
   const [outTab,setOutTab]=useState<StockOutTab>('general');
+  const [smsDraft,setSmsDraft]=useState<SmsDraft|null>(null);
+  const [sendingSms,setSendingSms]=useState(false);
+
   const [items,setItems]=useStoredState<InventoryItem[]>('garment-inventory-items',defaultItems);
   const [stockIn,setStockIn]=useStoredState<StockInRow[]>('garment-stock-in',defaultStockIn);
   const [stockOut,setStockOut]=useStoredState<StockOutRow[]>('garment-stock-out',defaultStockOut);
@@ -41,6 +46,7 @@ export function InventoryPage({company,customers,schools}:{company:CompanySettin
   const [customerStock,setCustomerStock]=useStoredState<CustomerStock[]>('garment-customer-stock',[]);
   const [sales,setSales]=useStoredState<StockSale[]>('garment-stock-sales',[]);
   const [invoices,setInvoices]=useStoredState<Invoice[]>('garment-invoices',[]);
+  const [students]=useStoredState<Student[]>('garment-students',[]);
 const [schoolBarcodes,setSchoolBarcodes]=useStoredState<SchoolBarcode[]>('garment-school-barcodes',[]);
 const currentYear=()=>{const y=new Date().getFullYear();return `${y}-${String(y+1).slice(2)}`;
 };
@@ -63,6 +69,61 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
   const [itemForm,setItemForm]=useState({code:'',name:'',subcategory:'',unit:'Piece',openingQty:0});
   const [partyForm,setPartyForm]=useState<PartyForm>(emptyPartyForm());
   const [saleForm,setSaleForm]=useState<SaleForm>(emptySaleForm());
+
+  const handledNavRef=useRef<string|null>(null);
+  useEffect(()=>{
+    const navKey=JSON.stringify(navParams);
+    if(!navParams||handledNavRef.current===navKey)return;
+    handledNavRef.current=navKey;
+
+    if(navParams?.stockView==='out'||navParams?.outTab==='school'){
+      setTab('out');
+      setOutTab('school');
+      if(navParams?.party){
+        const partyName=String(navParams.party);
+        setOutParty(partyName);
+        const gName=navParams?.garment ? String(navParams.garment) : '';
+        const girlsStock=schoolStock.some(s=>s.school===partyName&&(!gName||s.garment===gName)&&s.gender==='Girls');
+        const isGirlsGarment=['Skirt','Frock','Salwar','Pinafore','Top','Churidar','Blouse'].includes(gName);
+        const autoGender=navParams?.gender ? String(navParams.gender) : (girlsStock||isGirlsGarment?'Girls':'Boys');
+        setSaleForm(f=>({
+          ...f,
+          type:'School',
+          party:partyName,
+          gender:autoGender,
+          garment:gName||f.garment,
+          size:navParams?.size ? String(navParams.size) : f.size,
+          count:navParams?.count ? Number(navParams.count) : f.count
+        }));
+        setShowIssueStockModal(true);
+      }
+    }else if(navParams?.stockView==='ready'||navParams?.stockView==='in'){
+      setTab('in');
+      setInTab('school');
+      if(navParams?.party){
+        const partyName=String(navParams.party);
+        const gName=navParams?.garment ? String(navParams.garment) : '';
+        const sizeName=navParams?.size ? String(navParams.size) : '';
+        const countVal=navParams?.count ? Number(navParams.count) : 1;
+        const genderVal=navParams?.gender ? String(navParams.gender) : 'Boys';
+        const isKnownGarment=garments.some(g=>g.toLowerCase()===gName.toLowerCase());
+        const isKnownSize=defaultSizes.includes(sizeName);
+
+        setPartyForm(f=>({
+          ...f,
+          type:'School',
+          party:partyName,
+          gender:genderVal,
+          garment:isKnownGarment||!gName?gName||f.garment:'Other',
+          customGarment:isKnownGarment?'':gName,
+          size:isKnownSize||!sizeName?sizeName||f.size:'Custom',
+          customSize:isKnownSize?'':sizeName,
+          count:countVal
+        }));
+        setShowPartyStock(true);
+      }
+    }
+  },[navParams]);
   const [previewInvoice,setPreviewInvoice]=useState<Invoice|null>(null);
   const [message,setMessage]=useState('');
   const [summaryParty,setSummaryParty]=useState('');
@@ -82,24 +143,21 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
   const [outGarment,setOutGarment]=useState('');
   const [outSize,setOutSize]=useState('');
   const [itemPage,setItemPage]=useState(1);
+  const [materialSubcategory,setMaterialSubcategory]=useState('');
+  const [materialSearch,setMaterialSearch]=useState('');
+  const [materialInItem,setMaterialInItem]=useState('');
+  const [materialInSubcat,setMaterialInSubcat]=useState('');
+  const [materialOutItem,setMaterialOutItem]=useState('');
   const [editEntry,setEditEntry]=useState<SchoolStock|CustomerStock|null>(null);
   const [confirmStock,setConfirmStock]=useState<SchoolStock|null>(null);
   const [showPartyStock,setShowPartyStock]=useState(false);
+  const [showIssueStockModal,setShowIssueStockModal]=useState(false);
   const garments=[...defaultGarments,...customGarments];
 
   const normalizedItems=useMemo(()=>items.map(item=>item.length===4?[item[0],item[1],'-',item[2],item[3]] as InventoryItem:item),[items]);
   const hasOldItemRows=useMemo(()=>items.some(item=>item.length===4),[items]);
   useEffect(()=>{if(hasOldItemRows)setItems(normalizedItems)},[hasOldItemRows,normalizedItems,setItems]);
   useEffect(()=>{if(!normalizedItems.some(item=>item[1]===form.item))setForm(current=>({...current,item:normalizedItems[0]?.[1]||'',subcategory:normalizedItems[0]?.[2]||''}))},[normalizedItems,form.item]);
-  useEffect(()=>{
-    let active=true;
-    const syncStock=()=>{
-      fetch(`${API_BASE_URL}/api/ready-school-stock`).then(async response=>{if(response.status===404)return [];if(!response.ok)throw new Error('Unable to load ready stock');const body=await response.json();return body.data as SchoolStock[]}).then(rows=>{if(!active)return;setSchoolStock(current=>{const map=new Map(current.map(s=>[s.id,s]));rows.forEach(row=>{map.set(row.id,row)});return [...map.values()]})}).catch(error=>console.error(error));
-    };
-    syncStock();
-    const timer=setInterval(syncStock,3000);
-    return()=>{active=false;clearInterval(timer)};
-  },[]);
 
   const updateItemQty=(itemName:string,delta:number)=>setItems(current=>current.map(item=>{const row=item.length===4?[item[0],item[1],'-',item[2],item[3]] as InventoryItem:item;return row[1]===itemName?[row[0],row[1],row[2],row[3],String(Math.max(0,Number(row[4]||0)+delta))]:row}));
   const selectedItem=normalizedItems.find(item=>item[1]===form.item);
@@ -126,7 +184,11 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
   const availableQty=(type:PartyKind,party:string,garment:string,size:string,gender='')=>{
     const inQty=stockForParty(type,party).filter(s=>s.garment===garment&&s.size===size&&(!gender||type!=='School'||(s as SchoolStock).gender===gender)).reduce((a,s)=>a+s.count,0);
     const outQty=sales.filter(s=>s.type===type&&s.party===party&&s.garment===garment&&s.size===size&&(!gender||type!=='School'||s.gender===gender)).reduce((a,s)=>a+s.count,0);
-    return Math.max(0,inQty-outQty);
+    const specificAvail=Math.max(0,inQty-outQty);
+    if(specificAvail>0||!gender||type!=='School')return specificAvail;
+    const inQtyAny=stockForParty(type,party).filter(s=>s.garment===garment&&s.size===size).reduce((a,s)=>a+s.count,0);
+    const outQtyAny=sales.filter(s=>s.type===type&&s.party===party&&s.garment===garment&&s.size===size).reduce((a,s)=>a+s.count,0);
+    return Math.max(0,inQtyAny-outQtyAny);
   };
   const summaryRows=useMemo(()=>{
     const map:Record<string,{party:string;garment:string;size:string;added:number;issued:number}>={};
@@ -177,20 +239,164 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
   const schoolYears=Array.from(new Set([...schoolStock.map(s=>(s.date||'').slice(0,4)),...schoolSales.map(s=>(s.date||'').slice(0,4))].filter(Boolean))).sort().reverse();
   const customerYears=Array.from(new Set([...customerStock.map(s=>(s.date||'').slice(0,4)),...customerSales.map(s=>(s.date||'').slice(0,4))].filter(Boolean))).sort().reverse();
   const outSchoolYears=schoolYears;
-  const outSchoolOptions=Array.from(new Set(schoolSales.map(s=>s.party))).sort();
-  const outGenderOptions=Array.from(new Set(schoolSales.map(s=>s.gender).filter(Boolean))).sort();
-  const outGarmentOptions=Array.from(new Set(schoolSales.map(s=>s.garment))).sort();
-  const outSizeOptions=Array.from(new Set(schoolSales.map(s=>s.size))).sort(sortSizes);
-  const materialQty=normalizedItems.reduce((sum,item)=>sum+Number(item[4]||0),0);
-  const schoolAdded=schoolStock.reduce((sum,row)=>sum+row.count,0);
-  const customerAdded=customerStock.reduce((sum,row)=>sum+row.count,0);
-  const schoolIssued=saleCount(schoolSales);
-  const customerIssued=saleCount(customerSales);
+  const outSchoolOptions=useMemo(()=>Array.from(new Set([...schoolSales.map(s=>s.party),...schoolStock.map(s=>s.school),...schools.map(s=>s.name)].filter(Boolean))).sort(),[schoolSales,schoolStock,schools]);
+  const outCustomerOptions=useMemo(()=>Array.from(new Set([...customerSales.map(s=>s.party),...customerStock.map(s=>s.customer),...customers.map(c=>c[1])].filter(Boolean))).sort(),[customerSales,customerStock,customers]);
+  const outGenderOptions=Array.from(new Set([...schoolSales.map(s=>s.gender),...schoolStock.map(s=>s.gender)].filter(Boolean))).sort();
+  const outGarmentOptions=Array.from(new Set([...schoolSales.map(s=>s.garment),...schoolStock.map(s=>s.garment),...defaultGarments,...customGarments].filter(Boolean))).sort();
+  const outSizeOptions=Array.from(new Set([...schoolSales.map(s=>s.size),...schoolStock.map(s=>s.size),...defaultSizes].filter(Boolean))).sort(sortSizes);
+  const materialSubcategoryOptions=useMemo(()=>Array.from(new Set(normalizedItems.map(item=>item[2]).filter(b=>b&&b!=='-'))).sort(),[normalizedItems]);
+  const filteredMaterialItems=useMemo(()=>normalizedItems.filter(item=>{
+    if(materialSubcategory&&item[2]!==materialSubcategory)return false;
+    if(materialSearch){
+      const q=materialSearch.toLowerCase();
+      return (item[0]||'').toLowerCase().includes(q)||(item[1]||'').toLowerCase().includes(q)||(item[2]||'').toLowerCase().includes(q);
+    }
+    return true;
+  }),[normalizedItems,materialSubcategory,materialSearch]);
+
+  const filteredMaterialQty=filteredMaterialItems.reduce((sum,item)=>sum+Number(item[4]||0),0);
+  const materialStats:[string,string,string][]=[
+    ['Stock Items',String(filteredMaterialItems.length),'materials'],
+    ['Total Qty',String(filteredMaterialQty),'available material'],
+    ['Stock In',String(stockIn.length),'entries'],
+    ['Stock Out',String(stockOut.length),'entries']
+  ];
+
+  const materialInItemOptions=useMemo(()=>Array.from(new Set(normalizedStockIn.map(r=>r[2]))).sort(),[normalizedStockIn]);
+  const materialInSubcatOptions=useMemo(()=>Array.from(new Set(normalizedStockIn.map(r=>r[3]).filter(b=>b&&b!=='-'))).sort(),[normalizedStockIn]);
+  const filteredStockInHistory=useMemo(()=>normalizedStockIn.filter(r=>{
+    if(materialInItem&&r[2]!==materialInItem)return false;
+    if(materialInSubcat&&r[3]!==materialInSubcat)return false;
+    return true;
+  }),[normalizedStockIn,materialInItem,materialInSubcat]);
+  const materialInTotalQty=filteredStockInHistory.reduce((sum,r)=>sum+Number(r[4]||0),0);
+  const materialInStats:[string,string,string][]=[
+    ['Material Receipts',String(filteredStockInHistory.length),'entries'],
+    ['Total Qty Received',String(materialInTotalQty),'units received'],
+    ['Suppliers / Vendors',String(new Set(filteredStockInHistory.map(r=>r[5])).size),'suppliers']
+  ];
+
+  const materialOutItemOptions=useMemo(()=>Array.from(new Set(normalizedStockOut.map(r=>r[2]))).sort(),[normalizedStockOut]);
+  const filteredStockOutHistory=useMemo(()=>normalizedStockOut.filter(r=>{
+    if(materialOutItem&&r[2]!==materialOutItem)return false;
+    return true;
+  }),[normalizedStockOut,materialOutItem]);
+  const materialOutTotalQty=filteredStockOutHistory.reduce((sum,r)=>sum+Number(r[4]||0),0);
+  const materialOutStats:[string,string,string][]=[
+    ['Material Issues',String(filteredStockOutHistory.length),'entries'],
+    ['Total Qty Issued',String(materialOutTotalQty),'units issued']
+  ];
+
+  const schoolInAdded=filteredSchoolStock.reduce((a,s)=>a+s.count,0);
+  const schoolInIssued=saleCount(schoolSales.filter(s=>{
+    if(entriesYear&&(s.date||'').slice(0,4)!==entriesYear)return false;
+    if(entriesSchool&&s.party!==entriesSchool)return false;
+    if(entriesGender&&s.gender!==entriesGender)return false;
+    if(entriesGarment&&s.garment!==entriesGarment)return false;
+    if(entriesSize&&s.size!==entriesSize)return false;
+    return true;
+  }));
+  const schoolInSchoolsCount=new Set(filteredSchoolStock.map(s=>s.school)).size;
+  const schoolInAvailable=Math.max(0,schoolInAdded-schoolInIssued);
+
+  const schoolInStats:[string,string,string][]=[
+    ['Schools',String(schoolInSchoolsCount),'with ready stock'],
+    ['Pieces Added',String(schoolInAdded),'school pieces'],
+    ['Issued',String(schoolInIssued),'pieces sold'],
+    ['Available',String(schoolInAvailable),'ready pieces']
+  ];
+
+  const customerInStockList=useMemo(()=>customerStock.filter(s=>{
+    if(entriesYear&&(s.date||'').slice(0,4)!==entriesYear)return false;
+    if(summaryParty&&s.customer!==summaryParty)return false;
+    if(entriesGarment&&s.garment!==entriesGarment)return false;
+    if(entriesSize&&s.size!==entriesSize)return false;
+    return true;
+  }),[customerStock,entriesYear,summaryParty,entriesGarment,entriesSize]);
+
+  const customerInSalesList=useMemo(()=>customerSales.filter(s=>{
+    if(entriesYear&&(s.date||'').slice(0,4)!==entriesYear)return false;
+    if(summaryParty&&s.party!==summaryParty)return false;
+    if(entriesGarment&&s.garment!==entriesGarment)return false;
+    if(entriesSize&&s.size!==entriesSize)return false;
+    return true;
+  }),[customerSales,entriesYear,summaryParty,entriesGarment,entriesSize]);
+
+  const customerInAdded=customerInStockList.reduce((a,s)=>a+s.count,0);
+  const customerInIssued=saleCount(customerInSalesList);
+  const customerInPartyCount=new Set(customerInStockList.map(s=>s.customer)).size;
+  const customerInAvailable=Math.max(0,customerInAdded-customerInIssued);
+
+  const customerInStats:[string,string,string][]=[
+    ['Customers',String(customerInPartyCount),'with ready stock'],
+    ['Pieces Added',String(customerInAdded),'customer pieces'],
+    ['Issued',String(customerInIssued),'pieces sold'],
+    ['Available',String(customerInAvailable),'ready pieces']
+  ];
+
+  const schoolOutSalesList=useMemo(()=>schoolSales.filter(s=>{
+    if(outYear&&(s.date||'').slice(0,4)!==outYear)return false;
+    if(outParty&&s.party!==outParty)return false;
+    if(outGender&&s.gender!==outGender)return false;
+    if(outGarment&&s.garment!==outGarment)return false;
+    if(outSize&&s.size!==outSize)return false;
+    return true;
+  }),[schoolSales,outYear,outParty,outGender,outGarment,outSize]);
+
+  const schoolOutStockList=useMemo(()=>schoolStock.filter(s=>{
+    if(outYear&&(s.date||'').slice(0,4)!==outYear)return false;
+    if(outParty&&s.school!==outParty)return false;
+    if(outGender&&s.gender!==outGender)return false;
+    if(outGarment&&s.garment!==outGarment)return false;
+    if(outSize&&s.size!==outSize)return false;
+    return true;
+  }),[schoolStock,outYear,outParty,outGender,outGarment,outSize]);
+
+  const schoolOutIssuedCount=saleCount(schoolOutSalesList);
+  const schoolOutIssuedValue=saleValue(schoolOutSalesList);
+  const schoolOutAdded=schoolOutStockList.reduce((a,s)=>a+s.count,0);
+  const schoolOutAvailable=Math.max(0,schoolOutAdded-schoolOutIssuedCount);
+
+  const schoolOutStats:[string,string,string][]=[
+    ['School Sales',String(schoolOutSalesList.length),'invoices'],
+    ['Pieces Issued',String(schoolOutIssuedCount),'school pieces'],
+    ['Total Value',money(schoolOutIssuedValue),'school invoices'],
+    ['Available',String(schoolOutAvailable),'ready pieces']
+  ];
+
+  const customerOutSalesList=useMemo(()=>customerSales.filter(s=>{
+    if(outYear&&(s.date||'').slice(0,4)!==outYear)return false;
+    if(outParty&&s.party!==outParty)return false;
+    if(outGarment&&s.garment!==outGarment)return false;
+    if(outSize&&s.size!==outSize)return false;
+    return true;
+  }),[customerSales,outYear,outParty,outGarment,outSize]);
+
+  const customerOutStockList=useMemo(()=>customerStock.filter(s=>{
+    if(outYear&&(s.date||'').slice(0,4)!==outYear)return false;
+    if(outParty&&s.customer!==outParty)return false;
+    if(outGarment&&s.garment!==outGarment)return false;
+    if(outSize&&s.size!==outSize)return false;
+    return true;
+  }),[customerStock,outYear,outParty,outGarment,outSize]);
+
+  const customerOutIssuedCount=saleCount(customerOutSalesList);
+  const customerOutIssuedValue=saleValue(customerOutSalesList);
+  const customerOutAdded=customerOutStockList.reduce((a,s)=>a+s.count,0);
+  const customerOutAvailable=Math.max(0,customerOutAdded-customerOutIssuedCount);
+
+  const customerOutStats:[string,string,string][]=[
+    ['Customer Sales',String(customerOutSalesList.length),'invoices'],
+    ['Pieces Issued',String(customerOutIssuedCount),'customer pieces'],
+    ['Total Value',money(customerOutIssuedValue),'customer invoices'],
+    ['Available',String(customerOutAvailable),'ready pieces']
+  ];
+
   const summaryAdded=summaryRows.reduce((a,r)=>a+r.added,0);
   const summaryIssued=summaryRows.reduce((a,r)=>a+r.issued,0);
   const summaryPartyCount=new Set(summaryRows.map(r=>r.party)).size;
   const stockSummary=stockView==='material'
-    ? [['Stock Items',String(normalizedItems.length),'materials'],['Total Qty',String(materialQty),'available material'],['Stock In',String(stockIn.length),'entries'],['Stock Out',String(stockOut.length),'entries']]
+    ? materialStats
     : stockView==='school'
       ? [['Schools',String(summaryPartyCount),'with ready stock'],['Pieces Added',String(summaryAdded),'school pieces'],['Issued',String(summaryIssued),'pieces sold'],['Available',String(Math.max(0,summaryAdded-summaryIssued)),'ready pieces']]
       : [['Customers',String(summaryPartyCount),'with ready stock'],['Pieces Added',String(summaryAdded),'customer pieces'],['Issued',String(summaryIssued),'pieces sold'],['Available',String(Math.max(0,summaryAdded-summaryIssued)),'ready pieces']];
@@ -210,8 +416,8 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
     stockForParty(saleForm.type,saleForm.party).filter(s=>saleForm.type!=='School'||!saleForm.gender||(s as SchoolStock).gender===saleForm.gender).forEach(s=>{const key=`${s.garment}||${s.size}`;if(seen.has(key))return;seen.add(key);const available=availableQty(saleForm.type,saleForm.party,s.garment,s.size,saleForm.type==='School'?saleForm.gender:'');if(available>0)result.push({garment:s.garment,size:s.size,available})});
     return result.sort((a,b)=>a.garment.localeCompare(b.garment)||a.size.localeCompare(b.size));
   },[saleForm.type,saleForm.party,saleForm.gender,schoolStock,customerStock,sales]);
-  const saleGarments=Array.from(new Set(availableCombos.map(c=>c.garment)));
-  const saleSizes=Array.from(new Set(availableCombos.filter(c=>!saleForm.garment||c.garment===saleForm.garment).map(c=>c.size)));
+  const saleGarments=Array.from(new Set([...availableCombos.map(c=>c.garment),...(saleForm.garment?[saleForm.garment]:[]),...garments]));
+  const saleSizes=Array.from(new Set([...availableCombos.filter(c=>!saleForm.garment||c.garment===saleForm.garment).map(c=>c.size),...(saleForm.size?[saleForm.size]:[]),...defaultSizes]));
   const selectedCombo=availableCombos.find(c=>c.garment===saleForm.garment&&c.size===saleForm.size);
   const selectedGarmentName=saleForm.garment==='Other'?saleForm.customGarment.trim():saleForm.garment;
   const selectedSizeName=saleForm.size==='Custom'?saleForm.customSize.trim():saleForm.size;
@@ -251,29 +457,29 @@ const saveScanStockIn=async()=>{
     if(existing){
       const newCount=existing.count+row.count;
       const payload={...existing,count:newCount,date:today(),remarks:`Barcode scan: ${row.barcode}`};
-      try{
-        const response=await fetch(`${API_BASE_URL}/api/ready-school-stock/${existing.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-        if(!response.ok)throw new Error('Unable to update stock');
-        setSchoolStock(current=>current.map(s=>s.id===existing.id?payload:s));
-        saved++;
-      }catch(e){console.error(e)}
+      setSchoolStock(current=>current.map(s=>s.id===existing.id?payload:s));
+      saved++;
     }else{
       const payload={school:row.school,className:'General',date:today(),gender:row.gender,garment:row.garment,size:row.size,count:row.count,remarks:`Barcode scan: ${row.barcode}`};
-      try{
-        const response=await fetch(`${API_BASE_URL}/api/ready-school-stock`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-        if(!response.ok)throw new Error('Unable to save');
-        const body=await response.json();
-        const entry:SchoolStock={id:body.data.id,...payload};
-        setSchoolStock(current=>[entry,...current]);
-        saved++;
-      }catch(e){setMessage(e instanceof Error?e.message:'Unable to save stock');return}
+      const entry:SchoolStock={id:`RST-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,...payload};
+      setSchoolStock(current=>[entry,...current]);
+      saved++;
     }
   }
   setMessage(`Stock in updated: ${totalScanCount} pieces saved to consolidated stock.`);
   clearAllScans();
 };
   const switchStockView=(next:StockView)=>{setStockView(next);setEditEntry(null);setEntriesGender('');setEntriesGarment('');setEntriesSize('');setEntriesYear('');if(next!=='material'){const type:PartyKind=next==='school'?'School':'Customer';setSummaryParty('');setSummaryType(type)}};
-  const switchOutTab=(next:StockOutTab)=>{setOutTab(next);if(next!=='general'){const type:PartyKind=next==='school'?'School':'Customer';setSaleForm(current=>({...current,type,party:type==='School'?activeSchools[0]?.name||schools[0]?.name||'':activeCustomers[0]?.[1]||customers[0]?.[1]||'',garment:'',size:'',count:0,rate:0}))}};
+  const switchOutTab=(next:StockOutTab)=>{setOutTab(next);setShowIssueStockModal(false);if(next!=='general'){const type:PartyKind=next==='school'?'School':'Customer';setSaleForm(current=>({...current,type,party:type==='School'?activeSchools[0]?.name||schools[0]?.name||'':activeCustomers[0]?.[1]||customers[0]?.[1]||'',garment:'',size:'',count:0,rate:0}))}};
+  const openIssueStockModal=(type:PartyKind='School')=>{
+    setSaleForm(current=>({
+      ...current,
+      type,
+      party:current.party||(type==='School'?(activeSchools[0]?.name||schools[0]?.name||''):(activeCustomers[0]?.[1]||customers[0]?.[1]||''))
+    }));
+    setShowIssueStockModal(true);
+  };
+  const closeIssueStockModal=()=>setShowIssueStockModal(false);
 
   const addPartyStock=async()=>{
     const garment=partyForm.garment==='Other'?partyForm.customGarment.trim():partyForm.garment;
@@ -282,13 +488,8 @@ const saveScanStockIn=async()=>{
     if(!garments.some(g=>g.toLowerCase()===garment.toLowerCase()))setCustomGarments(current=>[...current,garment]);
     if(partyForm.type==='School'){
       const payload={school:partyForm.party,className:partyForm.className.trim()||'General',date:partyForm.date,gender:partyForm.gender,garment,size,count:Number(partyForm.count),remarks:partyForm.remarks.trim()||'-'};
-      try{
-        const response=await fetch(editEntry?`${API_BASE_URL}/api/ready-school-stock/${editEntry.id}`:`${API_BASE_URL}/api/ready-school-stock`,{method:editEntry?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-        if(!response.ok)throw new Error('Unable to save school ready stock');
-        const body=await response.json();
-        const entry:SchoolStock={id:body.data.id,...payload};
-        setSchoolStock(current=>editEntry?current.map(s=>s.id===entry.id?entry:s):[entry,...current]);
-      }catch(error){setMessage(error instanceof Error?error.message:'Unable to save school ready stock');return}
+      const entry:SchoolStock={id:editEntry?.id||`RST-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,...payload};
+      setSchoolStock(current=>editEntry?current.map(s=>s.id===entry.id?entry:s):[entry,...current]);
     }else{
       const entry:CustomerStock=editEntry?{...editEntry as CustomerStock,date:partyForm.date,customer:partyForm.party,garment,size,count:Number(partyForm.count),remarks:partyForm.remarks.trim()||'-'}:{id:`CUSSTK-${Date.now()}`,date:partyForm.date,customer:partyForm.party,garment,size,count:Number(partyForm.count),remarks:partyForm.remarks.trim()||'-'};
       setCustomerStock(current=>editEntry?current.map(s=>s.id===entry.id?entry:s):[entry,...current]);
@@ -299,31 +500,58 @@ const saveScanStockIn=async()=>{
     setMessage(`${garment} (${size}) × ${partyForm.count} ${editEntry?'updated':'added'} as ${partyForm.type==='School'?'school':'customer'} ready stock.`);
   };
   const deleteSchoolStock=(entry:SchoolStock)=>setConfirmStock(entry);
-  const confirmDeleteSchoolStock=async()=>{if(!confirmStock)return;try{await fetch(`${API_BASE_URL}/api/ready-school-stock/${confirmStock.id}`,{method:'DELETE'})}catch(error){console.error(error)}setSchoolStock(current=>current.filter(s=>s.id!==confirmStock.id));setMessage(`Deleted ${confirmStock.school} — ${confirmStock.garment} (${confirmStock.size}) × ${confirmStock.count} from school ready stock.`);setConfirmStock(null)};
+  const confirmDeleteSchoolStock=()=>{if(!confirmStock)return;setSchoolStock(current=>current.filter(s=>s.id!==confirmStock.id));setMessage(`Deleted ${confirmStock.school} — ${confirmStock.garment} (${confirmStock.size}) × ${confirmStock.count} from school ready stock.`);setConfirmStock(null)};
   const deleteCustomerStock=(id:string)=>{if(window.confirm('Delete this customer ready stock entry?'))setCustomerStock(current=>current.filter(s=>s.id!==id))};
   const startEdit=(entry:SchoolStock|CustomerStock)=>{const isSchool='school' in entry;const known=garments.some(g=>g===entry.garment);setPartyForm({type:isSchool?'School':'Customer',date:entry.date||today(),party:isSchool?entry.school:entry.customer,gender:isSchool?entry.gender:'Boys',className:isSchool?entry.className||'':'',garment:known?entry.garment:'Other',size:defaultSizes.includes(entry.size)?entry.size:'Custom',count:entry.count,remarks:entry.remarks&&entry.remarks!=='-'?entry.remarks:'',customGarment:known?'':entry.garment,customSize:defaultSizes.includes(entry.size)?'':entry.size});setEditEntry(entry);setShowPartyStock(true)};
-  const addSale=()=>{
+  const addSale=async()=>{
     const garment=selectedGarmentName,size=selectedSizeName;
     if(!saleForm.party||!garment||!size||saleForm.count<=0){setMessage('Select party, garment, size and enter a valid count.');return}
     const available=availableQty(saleForm.type,saleForm.party,garment,size);
     if(saleForm.count>available){setMessage(`Only ${available} piece${available===1?'':'s'} available for ${garment} (${size}).`);return}
-    const total=saleForm.count*saleForm.rate;
+
+    if(saleForm.type==='School'){
+      const schoolStudents=students.filter(st=>st.school===saleForm.party);
+      let totalMeasured=0;
+      schoolStudents.forEach(st=>{
+        if(st.sizes && st.sizes[garment]===size)totalMeasured++;
+      });
+      const alreadyIssued=sales.filter(s=>s.type==='School'&&s.party===saleForm.party&&s.garment===garment&&s.size===size).reduce((a,s)=>a+s.count,0);
+      if(totalMeasured>0&&alreadyIssued>=totalMeasured){
+        if(!window.confirm(`⚠️ All ${totalMeasured} measured pieces of ${garment} (${size}) for ${saleForm.party} have ALREADY been delivered! Are you sure you want to issue extra stock?`)){
+          return;
+        }
+      }
+    }
+
+    const numericRate=Number(saleForm.rate)||0;
+    const total=saleForm.count*numericRate;
     const number=saleForm.invoiceNo.trim()||`INV-${String(invoices.length+1).padStart(3,'0')}`;
     if(invoices.some(inv=>inv.invoiceNo===number)){setMessage('Invoice number already exists. Use a different number.');return}
-    const sale:StockSale={id:`SS-${Date.now()}`,date:saleForm.date,type:saleForm.type,party:saleForm.party,gender:saleForm.type==='School'?saleForm.gender:'',garment,size,count:saleForm.count,rate:saleForm.rate,total,invoiceNo:number,remarks:saleForm.remarks.trim()||'-'};
-    const invoice:Invoice={invoiceNo:number,invoiceDate:saleForm.date,dueDate:'',state:'',reverseCharge:'NO',customer:saleForm.party,customerPhone:'',customerGst:'',customerAddress:'',shipTo:saleForm.party,shipAddress:'',shipGst:'',product:`${garment} (${size})`,hsn:'',qty:saleForm.count,unit:'PCS',rate:saleForm.rate,cgst:0,sgst:0,taxableAmount:total,totalAmount:total,status:'Pending',terms:'This is an electronically generated document. All disputes are subject to local jurisdiction.'};
+    const sale:StockSale={id:`SS-${Date.now()}`,date:saleForm.date,type:saleForm.type,party:saleForm.party,gender:saleForm.type==='School'?saleForm.gender:'',garment,size,count:saleForm.count,rate:numericRate,total,invoiceNo:number,remarks:saleForm.remarks.trim()||'-'};
+    const invoice:Invoice={invoiceNo:number,invoiceDate:saleForm.date,dueDate:'',state:'',reverseCharge:'NO',customer:saleForm.party,customerPhone:'',customerGst:'',customerAddress:'',shipTo:saleForm.party,shipAddress:'',shipGst:'',product:`${garment} (${size})`,hsn:'',qty:saleForm.count,unit:'PCS',rate:numericRate,cgst:0,sgst:0,taxableAmount:total,totalAmount:total,status:'Pending',terms:'This is an electronically generated document. All disputes are subject to local jurisdiction.'};
     setSales(current=>[sale,...current]);
     setInvoices(current=>[invoice,...current]);
     setMessage(`Stock issued to ${saleForm.party}. Invoice ${number} created for ${money(total)}.`);
+    const recipientPhone=saleForm.type==='School'?(schools.find(s=>s.name===saleForm.party)?.phone||''):(customers.find(c=>c[1]===saleForm.party)?.[3]||'');
+    let garmentName=company.name?.trim()||'';
+    if(!garmentName){
+      try{
+        const response=await fetch(`${API_BASE_URL}/api/company-settings`,{headers:{'X-Tenant-ID':getStoredTenantId()}});
+        const body=await response.json() as {data?:{name?:string}};
+        garmentName=body.data?.name?.trim()||'';
+      }catch{}
+    }
+    setSmsDraft({recipientName:saleForm.party,recipientPhone:recipientPhone==='-'?'':recipientPhone,title:`Stock issued - ${number}`,message:formatStockOutSms({partyName:saleForm.party,date:saleForm.date,garment,size,count:saleForm.count,challanNo:number,companyName:garmentName||'[Set Garment name in Settings]'})});
     setSaleForm(current=>({...current,count:0,rate:0,remarks:'',invoiceNo:'',garment:'',size:''}));
-    setPreviewInvoice(invoice);
+    setShowIssueStockModal(false);
   };
+  const sendStockIssueSms=async()=>{if(!smsDraft)return;setSendingSms(true);const result=await sendSmsViaGateway({recipientName:smsDraft.recipientName,recipientPhone:smsDraft.recipientPhone,message:smsDraft.message,referenceType:'stock_issue',referenceId:smsDraft.title});setSendingSms(false);setMessage(result.message);if(result.ok)setSmsDraft(null)};
   const deleteSale=(sale:StockSale)=>{if(!window.confirm(`Delete stock issue ${sale.invoiceNo}? This also removes its invoice.`))return;setSales(current=>current.filter(s=>s.id!==sale.id));setInvoices(current=>current.filter(inv=>inv.invoiceNo!==sale.invoiceNo))};
 
   const openAddPartyStock=()=>{setEditEntry(null);setPartyForm(emptyPartyForm());setShowPartyStock(true)};
   const closePartyStockForm=()=>{setShowPartyStock(false);setEditEntry(null);setPartyForm(emptyPartyForm())};
 
-  const partyStockModal=showPartyStock&&<div className="stock-modal-overlay" onClick={closePartyStockForm}><article className="card measurement-form entry-modal" onClick={e=>e.stopPropagation()}>
+  const partyStockModal=showPartyStock ? (<div className="stock-modal-overlay" onClick={closePartyStockForm}><article className="card measurement-form entry-modal" onClick={e=>e.stopPropagation()}>
     <div className="form-title"><div><h2>{editEntry?'Edit ':'Add '}{partyForm.type==='School'?'ready stock for school':'ready stock for customer'}</h2><p>{editEntry?'Update the ready pieces and save the changes.':(partyForm.type==='School'?'Record school-wise ready pieces by gender, garment and size.':'Record customer-wise ready pieces by garment and size.')}</p></div><span className="batch-no">{partyForm.type==='School'?schoolStock.length:customerStock.length} ENTRIES</span></div>
     <div className="form-grid">
       <label>Date<input type="date" value={partyForm.date} onChange={e=>setPartyForm({...partyForm,date:e.target.value})}/></label>
@@ -338,7 +566,7 @@ const saveScanStockIn=async()=>{
       <label>Optional / Remarks<input value={partyForm.remarks} onChange={e=>setPartyForm({...partyForm,remarks:e.target.value})} placeholder="Optional notes"/></label>
     </div>
     <div className="form-actions"><button className="outline" onClick={closePartyStockForm}>Cancel</button><button className="primary" onClick={addPartyStock}>{editEntry?<Save size={16}/>:<Plus size={16}/>} {editEntry?'Save changes':'Add stock'}</button></div>
-  </article></div>;
+  </article></div>) : null;
 
   const handleSaleBarcodeScan=(code:string)=>{
     const bc=schoolBarcodes.find(b=>b.barcode===code);
@@ -351,32 +579,46 @@ const saveScanStockIn=async()=>{
     setMessage(`✓ Scanned barcode: ${bc.school} · ${bc.gender} ${bc.garmentType} (Size ${bc.size}) — count set to stock issue.`);
   };
 
-  const saleFormUI=<article className="card measurement-form">
+  const issueStockModal=showIssueStockModal ? (<div className="stock-modal-overlay" onClick={e=>{if(e.target===e.currentTarget)closeIssueStockModal()}}><article className="card measurement-form entry-modal" style={{maxWidth:'820px'}} onClick={e=>e.stopPropagation()}>
     <div className="form-title"><div><h2>{saleForm.type==='School'?'Issue stock to school':'Issue stock to customer'}</h2><p>Issue ready stock and automatically create a tax invoice.</p></div><span className="batch-no">AVAILABLE {selectedCombo?selectedCombo.available:0} PCS</span></div>
     <div className="sale-scan-row"><input className="barcode-scan-input" placeholder="Scan or type barcode to auto-fill fields" onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();const v=(e.target as HTMLInputElement).value.trim();if(v){handleSaleBarcodeScan(v);(e.target as HTMLInputElement).value=''}}}}/><button className="primary scan-inline-btn" onClick={()=>{setScanForSale(true);setShowBarcodeScanner(true)}}><Camera size={14}/> Scan</button></div>
     <div className="form-grid">
       <label>Date<input type="date" value={saleForm.date} onChange={e=>setSaleForm({...saleForm,date:e.target.value})}/></label>
       <label>{saleForm.type==='School'?'School name':'Customer'}<select value={saleForm.party} onChange={e=>setSaleForm({...saleForm,party:e.target.value,garment:'',size:''})}><option value="">Select {saleForm.type==='School'?'school':'customer'}</option>{salePartyOptions}</select></label>
       {saleForm.type==='School'&&<label>Gender<select value={saleForm.gender} onChange={e=>setSaleForm({...saleForm,gender:e.target.value,garment:'',size:''})}><option>Boys</option><option>Girls</option></select></label>}
-      <label>Garment<select value={saleForm.garment} onChange={e=>setSaleForm({...saleForm,garment:e.target.value,size:''})}><option value="">Select garment</option>{saleGarments.map(g=><option key={g} value={g}>{g}</option>)}</select></label>
-      <label>Size<select value={saleForm.size} onChange={e=>setSaleForm({...saleForm,size:e.target.value})}><option value="">Select size</option>{saleSizes.map(s=><option key={s} value={s}>{s}</option>)}</select></label>
+      <label>Garment<select value={saleForm.garment} onChange={e=>setSaleForm({...saleForm,garment:e.target.value,size:''})}><option value="">Select garment</option>{saleGarments.map(g=>{const avail=availableCombos.filter(c=>c.garment===g).reduce((a,c)=>a+c.available,0);return <option key={g} value={g}>{g}{avail>0?` (${avail} pcs ready)`:''}</option>})}</select></label>
+      <label>Size<select value={saleForm.size} onChange={e=>setSaleForm({...saleForm,size:e.target.value})}><option value="">Select size</option>{saleSizes.map(s=>{const combo=availableCombos.find(c=>(!saleForm.garment||c.garment===saleForm.garment)&&c.size===s);const avail=combo?combo.available:0;return <option key={s} value={s}>{s}{avail>0?` (${avail} pcs ready)`:''}</option>})}</select></label>
       <label>Count<input type="number" min="0" max={selectedCombo?.available||0} value={saleForm.count} onChange={e=>setSaleForm({...saleForm,count:Number(e.target.value)})}/></label>
-      <label>Price (per piece)<input type="number" min="0" value={saleForm.rate} onChange={e=>setSaleForm({...saleForm,rate:Number(e.target.value)})}/></label>
-      <label>Total amount<input value={money(saleForm.count*saleForm.rate)} disabled/></label>
+      <label>Price (per piece)<input type="number" min="0" inputMode="decimal" value={saleForm.rate} onFocus={e=>e.currentTarget.select()} onChange={e=>setSaleForm({...saleForm,rate:e.target.value})} onBlur={()=>setSaleForm(current=>({...current,rate:Number(current.rate)||0}))}/></label>
+      <label>Total amount<input value={money(saleForm.count*(Number(saleForm.rate)||0))} disabled/></label>
       <label>Invoice No<input value={saleForm.invoiceNo} onChange={e=>setSaleForm({...saleForm,invoiceNo:e.target.value})} placeholder="Auto: next INV number"/></label>
       <label>Remarks<input value={saleForm.remarks} onChange={e=>setSaleForm({...saleForm,remarks:e.target.value})} placeholder="Optional"/></label>
     </div>
-    <div className="form-actions"><button className="primary" onClick={addSale} disabled={!selectedCombo}><FileText size={16}/> Issue stock & create invoice</button></div>
-  </article>;
+    <div className="form-actions"><button className="outline" onClick={closeIssueStockModal}>Cancel</button><button className="primary" onClick={addSale} disabled={!selectedCombo || saleForm.count <= 0}><FileText size={16}/> Issue stock & create invoice</button></div>
+  </article></div>) : null;
 
   return <section className="content inventory-page">{message&&<div className="toast"><span className="toast-dot"/>{message}</div>}
+    {Boolean(navParams?.fromSchool) && onNavigate && (
+      <div className="return-to-school-bar" style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 18px',background:'#e5f1ed',border:'2px solid #007c68',borderRadius:'10px',marginBottom:'16px'}}>
+        <span style={{font:'600 14px Manrope',color:'#123d35',display:'flex',alignItems:'center',gap:8}}>
+          📍 Working on stock for <strong>{String(navParams?.fromSchool)}</strong>
+        </span>
+        <button className="primary" style={{display:'flex',alignItems:'center',gap:6,fontSize:13,padding:'8px 16px',borderRadius:8}} onClick={()=>onNavigate('Customers & Schools',{openSchool:String(navParams?.fromSchool)})}>
+          <ArrowLeft size={16}/> Back to {String(navParams?.fromSchool)} Dashboard
+        </button>
+      </div>
+    )}
     <div className="measurement-tabs wage-tabs">
       <button className={tab==='stock'?'active':''} onClick={()=>setTab('stock')}><Boxes size={16}/><span>Current Stock<small>{normalizedItems.length} items</small></span></button>
       <button className={tab==='in'?'active':''} onClick={()=>setTab('in')}><Plus size={16}/><span>Stock In<small>material & ready stock</small></span></button>
       <button className={tab==='out'?'active':''} onClick={()=>setTab('out')}><Truck size={16}/><span>Stock Out<small>issue + invoice</small></span></button>
       <button className={tab==='items'?'active':''} onClick={()=>setTab('items')}><ListPlus size={16}/><span>Item Head<small>item master</small></span></button>
     </div>
-    {tab==='stock'&&<div className="inventory-view-panel"><div className="inventory-line-tabs" role="tablist" aria-label="Current stock views"><button className={stockView==='material'?'active':''} onClick={()=>switchStockView('material')}>Material Stock</button><button className={stockView==='school'?'active':''} onClick={()=>switchStockView('school')}>School Stock</button><button className={stockView==='customer'?'active':''} onClick={()=>switchStockView('customer')}>Customer Stock</button></div><div className="inventory-tab-content">{stockView==='school'&&<div className="filterbar ready-stock-filter"><label>Year<select value={entriesYear} onChange={e=>setEntriesYear(e.target.value)}><option value="">All years</option>{schoolYears.map(y=><option key={y}>{y}</option>)}</select></label><label>School name<select value={summaryParty} onChange={e=>setSummaryParty(e.target.value)}><option value="">All schools</option>{summaryOptions}</select></label><label>Gender<select value={entriesGender} onChange={e=>setEntriesGender(e.target.value)}><option value="">All</option><option>Boys</option><option>Girls</option></select></label><label>Garment<select value={entriesGarment} onChange={e=>setEntriesGarment(e.target.value)}><option value="">All garments</option>{schoolGarmentOptions.map(g=><option key={g}>{g}</option>)}</select></label><label>Size<select value={entriesSize} onChange={e=>setEntriesSize(e.target.value)}><option value="">All sizes</option>{schoolSizeOptions.map(s=><option key={s}>{s}</option>)}</select></label></div>}{stockView==='customer'&&<div className="filterbar ready-stock-filter"><label>Year<select value={entriesYear} onChange={e=>setEntriesYear(e.target.value)}><option value="">All years</option>{customerYears.map(y=><option key={y}>{y}</option>)}</select></label><label>Customer<select value={summaryParty} onChange={e=>setSummaryParty(e.target.value)}><option value="">All customers</option>{summaryOptions}</select></label><label>Garment<select value={entriesGarment} onChange={e=>setEntriesGarment(e.target.value)}><option value="">All garments</option>{customerGarmentOptions.map(g=><option key={g}>{g}</option>)}</select></label><label>Size<select value={entriesSize} onChange={e=>setEntriesSize(e.target.value)}><option value="">All sizes</option>{customerSizeOptions.map(s=><option key={s}>{s}</option>)}</select></label></div>}<Stats values={stockSummary}/>{stockView==='material'&&<Table title="Current stock" copy="Material balance view" headers={['ITEM CODE','ITEM','SUBCATEGORY','UNIT','AVAILABLE QTY']} rows={normalizedItems} paged/>}{stockView==='school'&&<Table title="School stock" copy="Added, issued and available pieces combined by school, garment and size" headers={['SCHOOL','GARMENT','SIZE','ADDED','ISSUED','AVAILABLE']} rows={summaryLevelRows} paged total={`Total available: ${totalAvailable} pcs`}/>}{stockView==='customer'&&<Table title="Customer stock" copy="Added, issued and available pieces combined by customer, garment and size" headers={['CUSTOMER','GARMENT','SIZE','ADDED','ISSUED','AVAILABLE']} rows={summaryLevelRows} paged total={`Total available: ${totalAvailable} pcs`}/>}</div></div>}
+    {tab==='stock'&&<div className="inventory-view-panel"><div className="inventory-line-tabs" role="tablist" aria-label="Current stock views"><button className={stockView==='material'?'active':''} onClick={()=>switchStockView('material')}>Material Stock</button><button className={stockView==='school'?'active':''} onClick={()=>switchStockView('school')}>School Stock</button><button className={stockView==='customer'?'active':''} onClick={()=>switchStockView('customer')}>Customer Stock</button></div><div className="inventory-tab-content">
+      {stockView==='material'&&<><div className="filterbar ready-stock-filter"><label>Subcategory<select value={materialSubcategory} onChange={e=>setMaterialSubcategory(e.target.value)}><option value="">All subcategories</option>{materialSubcategoryOptions.map(sc=><option key={sc} value={sc}>{sc}</option>)}</select></label><label>Search item<input value={materialSearch} onChange={e=>setMaterialSearch(e.target.value)} placeholder="Search code or name..."/></label></div><Stats values={materialStats}/><Table title="Current stock" copy="Material balance view" headers={['ITEM CODE','ITEM','SUBCATEGORY','UNIT','AVAILABLE QTY']} rows={filteredMaterialItems} paged/></>}
+      {stockView==='school'&&<><div className="filterbar ready-stock-filter"><label>Year<select value={entriesYear} onChange={e=>setEntriesYear(e.target.value)}><option value="">All years</option>{schoolYears.map(y=><option key={y}>{y}</option>)}</select></label><label>School name<select value={summaryParty} onChange={e=>setSummaryParty(e.target.value)}><option value="">All schools</option>{summaryOptions}</select></label><label>Gender<select value={entriesGender} onChange={e=>setEntriesGender(e.target.value)}><option value="">All</option><option>Boys</option><option>Girls</option></select></label><label>Garment<select value={entriesGarment} onChange={e=>setEntriesGarment(e.target.value)}><option value="">All garments</option>{schoolGarmentOptions.map(g=><option key={g}>{g}</option>)}</select></label><label>Size<select value={entriesSize} onChange={e=>setEntriesSize(e.target.value)}><option value="">All sizes</option>{schoolSizeOptions.map(s=><option key={s}>{s}</option>)}</select></label></div><Stats values={stockSummary}/><Table title="School stock" copy="Added, issued and available pieces combined by school, garment and size" headers={['SCHOOL','GARMENT','SIZE','ADDED','ISSUED','AVAILABLE']} rows={summaryLevelRows} paged total={`Total available: ${totalAvailable} pcs`}/></>}
+      {stockView==='customer'&&<><div className="filterbar ready-stock-filter"><label>Year<select value={entriesYear} onChange={e=>setEntriesYear(e.target.value)}><option value="">All years</option>{customerYears.map(y=><option key={y}>{y}</option>)}</select></label><label>Customer<select value={summaryParty} onChange={e=>setSummaryParty(e.target.value)}><option value="">All customers</option>{summaryOptions}</select></label><label>Garment<select value={entriesGarment} onChange={e=>setEntriesGarment(e.target.value)}><option value="">All garments</option>{customerGarmentOptions.map(g=><option key={g}>{g}</option>)}</select></label><label>Size<select value={entriesSize} onChange={e=>setEntriesSize(e.target.value)}><option value="">All sizes</option>{customerSizeOptions.map(s=><option key={s}>{s}</option>)}</select></label></div><Stats values={stockSummary}/><Table title="Customer stock" copy="Added, issued and available pieces combined by customer, garment and size" headers={['CUSTOMER','GARMENT','SIZE','ADDED','ISSUED','AVAILABLE']} rows={summaryLevelRows} paged total={`Total available: ${totalAvailable} pcs`}/></>}
+    </div></div>}
     {tab==='in'&&<div className="inventory-view-panel">
       <div className="inventory-line-tabs" role="tablist" aria-label="Stock in views">
         <button className={inTab==='add'?'active':''} onClick={()=>switchInTab('add')}>Material Stock In</button>
@@ -385,8 +627,8 @@ const saveScanStockIn=async()=>{
         <button className={inTab==='customer'?'active':''} onClick={()=>switchInTab('customer')}>Customer Stock In</button>
       </div>
       <div className="inventory-tab-content">
-      {inTab==='add'&&<><article className="card measurement-form"><div className="form-title"><div><h2>Add stock in</h2><p>Record material received from vendor.</p></div></div><div className="form-grid"><label>Date<input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label><label>Item<select value={form.item} onChange={e=>changeStockItem(e.target.value)}>{itemOptions}</select></label><label>Subcategory<input value={form.subcategory} onChange={e=>setForm({...form,subcategory:e.target.value})} placeholder={selectedItem?.[2]||'Manual subcategory'}/></label><label>Quantity<input type="number" min="0" value={form.qty} onChange={e=>setForm({...form,qty:Number(e.target.value)})}/></label><label>Vendor<input value={form.vendor} onChange={e=>setForm({...form,vendor:e.target.value})}/></label><label className="wide">Bill / Remarks<input value={form.remarks} onChange={e=>setForm({...form,remarks:e.target.value})}/></label></div><div className="form-actions"><button className="primary" onClick={addStockIn}><Plus size={16}/> Add stock in</button></div></article><Table title="Stock in history" copy="Material received entries" headers={['ENTRY','DATE','ITEM','SUBCATEGORY','QTY','VENDOR','BILL / REMARKS']} rows={normalizedStockIn} paged/></>}
-      {inTab==='school'&&<><Stats values={[['Schools',String(new Set(schoolStock.map(s=>s.school)).size),'with ready stock'],['Pieces Added',String(schoolStock.reduce((a,s)=>a+s.count,0)),'school pieces'],['Issued',String(schoolSales.reduce((a,s)=>a+s.count,0)),'pieces sold'],['Available',String(schoolStock.reduce((a,s)=>a+s.count,0)-schoolSales.reduce((a,s)=>a+s.count,0)),'ready pieces']]}/>
+      {inTab==='add'&&<><div className="filterbar ready-stock-filter"><label>Item<select value={materialInItem} onChange={e=>setMaterialInItem(e.target.value)}><option value="">All items</option>{materialInItemOptions.map(it=><option key={it} value={it}>{it}</option>)}</select></label><label>Subcategory<select value={materialInSubcat} onChange={e=>setMaterialInSubcat(e.target.value)}><option value="">All subcategories</option>{materialInSubcatOptions.map(sc=><option key={sc} value={sc}>{sc}</option>)}</select></label></div><Stats values={materialInStats}/><article className="card measurement-form"><div className="form-title"><div><h2>Add stock in</h2><p>Record material received from vendor.</p></div></div><div className="form-grid"><label>Date<input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label><label>Item<select value={form.item} onChange={e=>changeStockItem(e.target.value)}>{itemOptions}</select></label><label>Subcategory<input value={form.subcategory} onChange={e=>setForm({...form,subcategory:e.target.value})} placeholder={selectedItem?.[2]||'Manual subcategory'}/></label><label>Quantity<input type="number" min="0" value={form.qty} onChange={e=>setForm({...form,qty:Number(e.target.value)})}/></label><label>Vendor<input value={form.vendor} onChange={e=>setForm({...form,vendor:e.target.value})}/></label><label className="wide">Bill / Remarks<input value={form.remarks} onChange={e=>setForm({...form,remarks:e.target.value})}/></label></div><div className="form-actions"><button className="primary" onClick={addStockIn}><Plus size={16}/> Add stock in</button></div></article><Table title="Stock in history" copy="Material received entries" headers={['ENTRY','DATE','ITEM','SUBCATEGORY','QTY','VENDOR','BILL / REMARKS']} rows={filteredStockInHistory} paged/></>}
+      {inTab==='school'&&<>
       <div className="filterbar ready-stock-filter">
         <label>Year<select value={entriesYear} onChange={e=>setEntriesYear(e.target.value)}><option value="">All years</option>{schoolYears.map(y=><option key={y}>{y}</option>)}</select></label>
         <label>School<select value={entriesSchool} onChange={e=>setEntriesSchool(e.target.value)}><option value="">All schools</option>{summarySchools.map(s=><option key={s}>{s}</option>)}</select></label>
@@ -394,10 +636,11 @@ const saveScanStockIn=async()=>{
         <label>Garment<select value={entriesGarment} onChange={e=>setEntriesGarment(e.target.value)}><option value="">All garments</option>{schoolGarmentOptions.map(g=><option key={g}>{g}</option>)}</select></label>
         <label>Size<select value={entriesSize} onChange={e=>setEntriesSize(e.target.value)}><option value="">All sizes</option>{schoolSizeOptions.map(s=><option key={s}>{s}</option>)}</select></label>
       </div>
+      <Stats values={schoolInStats}/>
       <Table title="School ready stock entries" copy="Date, school, gender, garment, size and count records" headers={['ID','DATE','SCHOOL','GENDER','GARMENT','SIZE','COUNT','REMARKS']} rows={schoolRows} paged action={<div style={{display:'flex',gap:8}}><button className="outline" onClick={()=>setShowScanStockInModal(true)}><Camera size={15}/> Scan Barcode {totalScanCount>0?`(${totalScanCount})`:''}</button><button className="primary" onClick={openAddPartyStock}><Plus size={15}/> Add Ready stock</button></div>} actions={row=>{const entry=consolidatedSchoolStock.find(s=>s.id===row[0]);if(!entry)return null;return <div className="dropdown-action-cell"><button className="outline mini-action dropdown-trigger" onClick={e=>{e.stopPropagation();const rect=(e.currentTarget as HTMLElement).getBoundingClientRect();const pos={top:rect.bottom+4,left:Math.max(8,rect.right-160)};setStockDropdownPos(openStockAction===entry.id?null:pos);setOpenStockAction(openStockAction===entry.id?null:entry.id)}}>Actions <span className="dropdown-arrow"/></button>{openStockAction===entry.id&&stockDropdownPos&&<div className="dropdown-menu" style={{top:stockDropdownPos.top,left:stockDropdownPos.left}}><button className="dropdown-item" onClick={()=>{setOpenStockAction(null);setStockDropdownPos(null);setViewStockEntry(entry)}}><FileText size={14}/> Details</button><button className="dropdown-item" onClick={()=>{setOpenStockAction(null);setStockDropdownPos(null);startEdit(entry)}}><Pencil size={14}/> Edit</button><button className="dropdown-item danger" onClick={()=>{setOpenStockAction(null);setStockDropdownPos(null);deleteSchoolStock(entry)}}><Trash2 size={14}/> Delete</button></div>}</div>}}/>
       {showScanStockInModal&&<div className="stock-modal-overlay" onClick={()=>setShowScanStockInModal(false)}><article className="card measurement-form entry-modal barcode-scanner-modal" style={{maxWidth:'860px'}} onClick={e=>e.stopPropagation()}><div className="form-title"><div><h2><Camera size={18}/> Scan Barcode — Stock In</h2><p>Each scan adds +1 piece. Point USB scanner or mobile camera to scan tags.</p></div><button className="outline mini-action" onClick={()=>setShowScanStockInModal(false)}><X size={16}/></button></div><div className="scanner-body" style={{marginTop:'12px'}}><div className="barcode-scan-actions-row"><button className="primary" onClick={()=>{setScanForSale(false);setShowBarcodeScanner(true)}}><Camera size={16}/> Open Camera Scanner</button>{totalScanCount>0&&<span className="scan-total-badge">{totalScanCount} scans queued</span>}</div>{totalScanCount>0&&<div className="scan-summary"><div className="scan-summary-header"><h3>Scan Summary</h3><div className="scan-summary-actions"><button className="outline mini-action" onClick={clearAllScans}><Trash2 size={14}/> Clear All</button><button className="primary" onClick={async()=>{await saveScanStockIn();setShowScanStockInModal(false)}}><Save size={14}/> Save Stock In ({totalScanCount} pcs)</button></div></div><table><thead><tr><th>SCHOOL</th><th>GENDER</th><th>GARMENT</th><th>SIZE</th><th>BARCODE</th><th>STOCK IN</th><th></th></tr></thead><tbody>{scanSummary.map(r=><tr key={r.barcode}><td><strong>{r.school}</strong></td><td>{r.gender}</td><td>{r.garment}</td><td>{r.size}</td><td><div className="barcode-cell"><BarcodeImage value={r.barcode} width={1} height={22} fontSize={9} displayValue={true}/></div></td><td><strong className="scan-count-cell">{r.count}</strong></td><td><button className="outline mini-action danger" onClick={()=>removeScanCount(r.barcode)}><Trash2 size={13}/></button></td></tr>)}<tr className="scan-total-row"><td colSpan={5}><strong>TOTAL</strong></td><td colSpan={2}><strong>{totalScanCount} pieces</strong></td></tr></tbody></table></div>}{scanHistory.length>0&&<div className="scan-history"><h4>Recent Scans</h4><div className="scan-history-list">{scanHistory.slice(0,20).map((s,i)=><div key={i} className="scan-history-item"><span className="scan-history-barcode">{s.barcode}</span><span className="scan-history-time">{s.time}</span></div>)}</div></div>}<div className="form-actions" style={{marginTop:'16px'}}><button className="outline" onClick={()=>setShowScanStockInModal(false)}>Close</button>{totalScanCount>0&&<button className="primary" onClick={async()=>{await saveScanStockIn();setShowScanStockInModal(false)}}><Save size={16}/> Save Stock In ({totalScanCount} pcs)</button>}</div></div></article></div>}</>}
-      {inTab==='customer'&&<><Stats values={[['Customers',String(new Set(customerStock.map(s=>s.customer)).size),'with ready stock'],['Pieces Added',String(customerStock.reduce((a,s)=>a+s.count,0)),'customer pieces'],['Issued',String(customerSales.reduce((a,s)=>a+s.count,0)),'pieces sold'],['Available',String(customerStock.reduce((a,s)=>a+s.count,0)-customerSales.reduce((a,s)=>a+s.count,0)),'ready pieces']]}/><Table title="Customer ready stock entries" copy="Date, customer, garment, size and count records" headers={['ID','DATE','CUSTOMER','GARMENT','SIZE','COUNT','REMARKS']} rows={customerRows} paged action={<button className="primary" onClick={openAddPartyStock}><Plus size={15}/> Add Ready stock</button>} actions={row=>{const entry=customerStock.find(s=>s.id===row[0]);return entry?<div className="table-actions"><button className="outline mini-action" onClick={()=>startEdit(entry)}><Pencil size={14}/></button><button className="outline mini-action danger" onClick={()=>deleteCustomerStock(entry.id)}><Trash2 size={14}/></button></div>:null}}/></>}
-      {inTab==='barcode'&&<><div className="filterbar ready-stock-filter"><label>Year<select value={barcodeFilterYear} onChange={e=>{setBarcodeFilterYear(e.target.value);setOpenBarcodeAction(null)}}><option value="">All years</option>{Array.from(new Set(schoolBarcodes.map(b=>b.year).filter(Boolean))).sort().reverse().map(y=><option key={y} value={y}>{y}</option>)}</select></label><label>School<select value={barcodeFilterSchool} onChange={e=>{setBarcodeFilterSchool(e.target.value);setOpenBarcodeAction(null)}}><option value="">All schools</option>{Array.from(new Set(schoolBarcodes.map(b=>b.school))).sort().map(s=><option key={s} value={s}>{s}</option>)}</select></label></div><article className="card jobs module-table"><div className="cardhead"><div><h2>School Barcode List</h2><p>Generated barcodes for school ready stock</p></div><div className="cardhead-actions">{selectedBarcodes.size>0&&<button className="outline" onClick={()=>handlePrintBarcodes(filteredBarcodes.filter(b=>selectedBarcodes.has(b.id)))}><Printer size={15}/> Print Selected ({selectedBarcodes.size})</button>}{filteredBarcodes.length>0&&<button className="outline" onClick={()=>handlePrintBarcodes(filteredBarcodes)}><Printer size={15}/> Print All ({filteredBarcodes.length})</button>}<button className="primary" onClick={()=>{setEditBarcode(null);setBarcodeForm({school:'',year:currentYear(),shortTime:'',size:'28',garmentType:'Shirt',gender:'Boys'});setShowGenerateBarcode(true)}}><Plus size={15}/> Generate Barcode</button></div></div><table><thead><tr><th style={{width:40}}><input type="checkbox" checked={selectedBarcodes.size===filteredBarcodes.length&&filteredBarcodes.length>0} onChange={toggleAllBarcodes}/></th><th>YEAR</th><th>SCHOOL</th><th>SHORT TIME</th><th>DATE</th><th>GENDER</th><th>GARMENT</th><th>SIZE</th><th>BARCODE</th><th>ACTIONS</th></tr></thead><tbody>{filteredBarcodes.map(b=><tr key={b.id}><td><input type="checkbox" checked={selectedBarcodes.has(b.id)} onChange={()=>toggleBarcodeSelect(b.id)}/></td><td>{b.year||'-'}</td><td><strong>{b.school}</strong></td><td>{b.shortTime||'-'}</td><td>{b.generatedDate}</td><td>{b.gender}</td><td>{b.garmentType}</td><td>{b.size}</td><td><div className="barcode-cell"><BarcodeImage value={b.barcode} width={1.2} height={28} fontSize={10}/></div></td><td><div className="dropdown-action-cell"><button className="outline mini-action dropdown-trigger" onClick={e=>{e.stopPropagation();const rect=(e.currentTarget as HTMLElement).getBoundingClientRect();const pos={top:rect.bottom+4,left:Math.max(8,rect.right-160)};setDropdownPos(openBarcodeAction===b.id?null:pos);setOpenBarcodeAction(openBarcodeAction===b.id?null:b.id)}}>Actions <span className="dropdown-arrow"/></button>{openBarcodeAction===b.id&&dropdownPos&&<div className="dropdown-menu" style={{top:dropdownPos.top,left:dropdownPos.left}}><button className="dropdown-item" onClick={()=>{setOpenBarcodeAction(null);setDropdownPos(null);setViewBarcode(b)}}><FileText size={14}/> Details</button><button className="dropdown-item" onClick={()=>{setOpenBarcodeAction(null);setDropdownPos(null);startEditBarcode(b)}}><Pencil size={14}/> Edit</button><button className="dropdown-item danger" onClick={()=>{setOpenBarcodeAction(null);setDropdownPos(null);setConfirmDeleteBarcode(b)}}><Trash2 size={14}/> Delete</button></div>}</div></td></tr>)}</tbody></table>{!filteredBarcodes.length&&<div className="empty-row">No barcodes found</div>}</article></>}
+      {inTab==='customer'&&<><div className="filterbar ready-stock-filter"><label>Year<select value={entriesYear} onChange={e=>setEntriesYear(e.target.value)}><option value="">All years</option>{customerYears.map(y=><option key={y}>{y}</option>)}</select></label><label>Customer<select value={summaryParty} onChange={e=>setSummaryParty(e.target.value)}><option value="">All customers</option>{summaryOptions}</select></label><label>Garment<select value={entriesGarment} onChange={e=>setEntriesGarment(e.target.value)}><option value="">All garments</option>{customerGarmentOptions.map(g=><option key={g}>{g}</option>)}</select></label><label>Size<select value={entriesSize} onChange={e=>setEntriesSize(e.target.value)}><option value="">All sizes</option>{customerSizeOptions.map(s=><option key={s}>{s}</option>)}</select></label></div><Stats values={customerInStats}/><Table title="Customer ready stock entries" copy="Date, customer, garment, size and count records" headers={['ID','DATE','CUSTOMER','GARMENT','SIZE','COUNT','REMARKS']} rows={customerRows} paged action={<button className="primary" onClick={openAddPartyStock}><Plus size={15}/> Add Ready stock</button>} actions={row=>{const entry=customerStock.find(s=>s.id===row[0]);return entry?<div className="table-actions"><button className="outline mini-action" onClick={()=>startEdit(entry)}><Pencil size={14}/></button><button className="outline mini-action danger" onClick={()=>deleteCustomerStock(entry.id)}><Trash2 size={14}/></button></div>:null}}/></>}
+      {inTab==='barcode'&&<><div className="filterbar ready-stock-filter"><label>Year<select value={barcodeFilterYear} onChange={e=>{setBarcodeFilterYear(e.target.value);setOpenBarcodeAction(null)}}><option value="">All years</option>{Array.from(new Set(schoolBarcodes.map(b=>b.year).filter(Boolean))).sort().reverse().map(y=><option key={y} value={y}>{y}</option>)}</select></label><label>School<select value={barcodeFilterSchool} onChange={e=>{setBarcodeFilterSchool(e.target.value);setOpenBarcodeAction(null)}}><option value="">All schools</option>{Array.from(new Set(schoolBarcodes.map(b=>b.school))).sort().map(s=><option key={s} value={s}>{s}</option>)}</select></label></div><article className="card jobs module-table"><div className="cardhead"><div><h2>School Barcode List</h2><p>Generated barcodes for school ready stock</p></div><div className="cardhead-actions">{selectedBarcodes.size>0&&<button className="outline" onClick={()=>handlePrintBarcodes(filteredBarcodes.filter(b=>selectedBarcodes.has(b.id)))}><Printer size={15}/> Print Selected ({selectedBarcodes.size})</button>}{filteredBarcodes.length>0&&<button className="outline" onClick={()=>handlePrintBarcodes(filteredBarcodes)}><Printer size={15}/> Print All ({filteredBarcodes.length})</button>}<button className="primary" onClick={()=>{setEditBarcode(null);setBarcodeForm({school:'',year:currentYear(),shortTime:'',size:'28',garmentType:'Shirt',gender:'Boys'});setShowGenerateBarcode(true)}}><Plus size={15}/> Generate Barcode</button></div></div><table><thead><tr><th style={{width:40}}><input type="checkbox" checked={selectedBarcodes.size===filteredBarcodes.length&&filteredBarcodes.length>0} onChange={toggleAllBarcodes}/></th><th>YEAR</th><th>SCHOOL</th><th>SHORT TIME</th><th>DATE</th><th>GENDER</th><th>GARMENT</th><th>SIZE</th><th>BARCODE</th><th>ACTIONS</th></tr></thead><tbody>{filteredBarcodes.map(b=><tr key={b.id}><td><input type="checkbox" checked={selectedBarcodes.has(b.id)} onChange={()=>toggleBarcodeSelect(b.id)}/></td><td>{b.year||'-'}</td><td><strong>{b.school}</strong></td><td>{b.shortTime||'-'}</td><td>{b.generatedDate}</td><td>{b.gender}</td><td>{b.garmentType}</td><td>{b.size}</td><td><div className="barcode-cell"><BarcodeImage value={b.barcode} width={1.2} height={28} fontSize={10}/></div></td><td><div className="dropdown-action-cell"><button className="outline mini-action dropdown-trigger" onClick={e=>{e.stopPropagation();const rect=(e.currentTarget as HTMLElement).getBoundingClientRect();const pos={top:rect.bottom+4,left:Math.max(8,rect.right-160)};setDropdownPos(openBarcodeAction===b.id?null:pos);setOpenBarcodeAction(openBarcodeAction===b.id?null:b.id)}}>Actions <span className="dropdown-arrow"/></button>{openBarcodeAction===b.id&&dropdownPos&&<div className="dropdown-menu" style={{top:stockDropdownPos?.top||dropdownPos.top,left:stockDropdownPos?.left||dropdownPos.left}}><button className="dropdown-item" onClick={()=>{setOpenBarcodeAction(null);setDropdownPos(null);setViewBarcode(b)}}><FileText size={14}/> Details</button><button className="dropdown-item" onClick={()=>{setOpenBarcodeAction(null);setDropdownPos(null);startEditBarcode(b)}}><Pencil size={14}/> Edit</button><button className="dropdown-item danger" onClick={()=>{setOpenBarcodeAction(null);setDropdownPos(null);setConfirmDeleteBarcode(b)}}><Trash2 size={14}/> Delete</button></div>}</div></td></tr>)}</tbody></table>{!filteredBarcodes.length&&<div className="empty-row">No barcodes found</div>}</article></>}
       {showGenerateBarcode&&<div className="stock-modal-overlay" onClick={()=>{setShowGenerateBarcode(false);setEditBarcode(null)}}><article className="card measurement-form entry-modal" onClick={e=>e.stopPropagation()}><div className="form-title"><div><h2>{editBarcode?'Edit School Barcode':'Generate School Barcode'}</h2><p>{editBarcode?`Update barcode ${editBarcode.barcode}`:'Create a new barcode for school ready stock tracking.'}</p></div></div><div className="form-grid"><label>Year<select value={barcodeForm.year} onChange={e=>setBarcodeForm({...barcodeForm,year:e.target.value})}>{['2025-26','2026-27','2027-28','2028-29','2029-30'].map(y=><option key={y} value={y}>{y}</option>)}</select></label><label>School<select value={barcodeForm.school} onChange={e=>setBarcodeForm({...barcodeForm,school:e.target.value})}><option value="">Select school</option>{activeSchools.map(s=><option key={s.id} value={s.name}>{s.name}</option>)}</select></label><label>Short Time<input value={barcodeForm.shortTime} onChange={e=>setBarcodeForm({...barcodeForm,shortTime:e.target.value})} placeholder="Example: 10AM"/></label><label>Size<select value={barcodeForm.size} onChange={e=>setBarcodeForm({...barcodeForm,size:e.target.value})}>{['24','26','28','30','32','34','36','38','40','42'].map(s=><option key={s} value={s}>{s}</option>)}</select></label><label>Garment Type<select value={barcodeForm.garmentType} onChange={e=>setBarcodeForm({...barcodeForm,garmentType:e.target.value})}>{defaultGarmentTypes.map(g=><option key={g} value={g}>{g}</option>)}</select></label><label>Gender<select value={barcodeForm.gender} onChange={e=>setBarcodeForm({...barcodeForm,gender:e.target.value})}><option>Boys</option><option>Girls</option></select></label></div><div className="form-actions"><button className="outline" onClick={()=>{setShowGenerateBarcode(false);setEditBarcode(null)}}>Cancel</button><button className="primary" onClick={editBarcode?saveEditBarcode:generateSchoolBarcode}>{editBarcode?<>Save Changes</>:<>Generate Barcode</>}</button></div></article></div>}
       {viewBarcode&&<div className="stock-modal-overlay" onClick={()=>setViewBarcode(null)}><article className="card measurement-form detail-modal" onClick={e=>e.stopPropagation()}><div className="form-title"><div><h2>Barcode Details</h2><p>Information stored for this barcode.</p></div><span className="batch-no">{viewBarcode.barcode}</span></div><div className="barcode-print-preview"><BarcodeImage value={viewBarcode.barcode} width={2.5} height={50} fontSize={14}/></div><div className="detail-grid"><div><span>School</span><strong>{viewBarcode.school}</strong></div><div><span>Barcode</span><strong>{viewBarcode.barcode}</strong></div><div><span>Year</span><strong>{viewBarcode.year||'-'}</strong></div><div><span>Short Time</span><strong>{viewBarcode.shortTime||'-'}</strong></div><div><span>Size</span><strong>{viewBarcode.size}</strong></div><div><span>Garment Type</span><strong>{viewBarcode.garmentType}</strong></div><div><span>Gender</span><strong>{viewBarcode.gender}</strong></div><div><span>Generated Date</span><strong>{viewBarcode.generatedDate}</strong></div></div><div className="form-actions"><button className="outline" onClick={()=>setViewBarcode(null)}>Close</button></div></article></div>}
       {viewStockEntry&&<div className="stock-modal-overlay" onClick={()=>setViewStockEntry(null)}><article className="card measurement-form detail-modal" onClick={e=>e.stopPropagation()}><div className="form-title"><div><h2>Ready Stock Details</h2><p>Information stored for this ready stock entry.</p></div><span className="batch-no">{viewStockEntry.id}</span></div><div className="barcode-print-preview"><BarcodeImage value={schoolBarcodes.find(b=>b.school===viewStockEntry.school&&b.gender===viewStockEntry.gender&&b.garmentType===viewStockEntry.garment&&b.size===viewStockEntry.size)?.barcode||`STOCK-${viewStockEntry.id}`} width={2.5} height={50} fontSize={14}/></div><div className="detail-grid"><div><span>School</span><strong>{viewStockEntry.school}</strong></div><div><span>Entry ID</span><strong>{viewStockEntry.id}</strong></div><div><span>Date</span><strong>{viewStockEntry.date}</strong></div><div><span>Gender</span><strong>{viewStockEntry.gender}</strong></div><div><span>Garment</span><strong>{viewStockEntry.garment}</strong></div><div><span>Size</span><strong>{viewStockEntry.size}</strong></div><div><span>Total Ready Count</span><strong>{viewStockEntry.count} Pcs</strong></div><div><span>Remarks</span><strong>{viewStockEntry.remarks||'-'}</strong></div></div><div className="form-actions"><button className="outline" onClick={()=>setViewStockEntry(null)}>Close</button></div></article></div>}
@@ -411,13 +654,15 @@ const saveScanStockIn=async()=>{
         <button className={outTab==='customer'?'active':''} onClick={()=>switchOutTab('customer')}>Customer</button>
       </div>
       <div className="inventory-tab-content">
-      {outTab==='general'&&<><article className="card measurement-form"><div className="form-title"><div><h2>Add stock out</h2><p>Record material issued to production/order.</p></div></div><div className="form-grid"><label>Date<input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label><label>Item<select value={form.item} onChange={e=>changeStockItem(e.target.value)}>{itemOptions}</select></label><label>Subcategory<input value={form.subcategory} onChange={e=>setForm({...form,subcategory:e.target.value})} placeholder={selectedItem?.[2]||'Manual subcategory'}/></label><label>Quantity<input type="number" min="0" value={form.qty} onChange={e=>setForm({...form,qty:Number(e.target.value)})}/></label><label className="wide">Order / Remarks<input value={form.remarks} onChange={e=>setForm({...form,remarks:e.target.value})}/></label></div><div className="form-actions"><button className="primary" onClick={addStockOut}><Plus size={16}/> Add stock out</button></div></article><Table title="Stock out history" copy="Material issue entries" headers={['ENTRY','DATE','ITEM','SUBCATEGORY','QTY','ORDER / REMARKS','PURPOSE']} rows={normalizedStockOut} paged/></>}
-      {outTab==='school'&&<><Stats values={[['School Sales',String(schoolSales.length),'invoices'],['Pieces Issued',String(saleCount(schoolSales)),'school pieces'],['Total Value',money(saleValue(schoolSales)),'school invoices'],['Available',String(schoolStock.reduce((a,s)=>a+s.count,0)-saleCount(schoolSales)),'ready pieces']]}/>{saleFormUI}<div className="filterbar ready-stock-filter"><label>Year<select value={outYear} onChange={e=>setOutYear(e.target.value)}><option value="">All years</option>{outSchoolYears.map(y=><option key={y}>{y}</option>)}</select></label><label>School<select value={outParty} onChange={e=>setOutParty(e.target.value)}><option value="">All schools</option>{outSchoolOptions.map(s=><option key={s}>{s}</option>)}</select></label><label>Gender<select value={outGender} onChange={e=>setOutGender(e.target.value)}><option value="">All</option>{outGenderOptions.map(g=><option key={g}>{g}</option>)}</select></label><label>Garment<select value={outGarment} onChange={e=>setOutGarment(e.target.value)}><option value="">All garments</option>{outGarmentOptions.map(g=><option key={g}>{g}</option>)}</select></label><label>Size<select value={outSize} onChange={e=>setOutSize(e.target.value)}><option value="">All sizes</option>{outSizeOptions.map(s=><option key={s}>{s}</option>)}</select></label></div><Table title="School stock issues" copy="Issued ready stock with generated tax invoices" headers={['ID','DATE','GENDER','SCHOOL','GARMENT','SIZE','COUNT','PRICE','TOTAL','INVOICE']} rows={schoolSaleRows} paged actions={row=>{const sale=sales.find(s=>s.id===row[0]);const invoice=sale?invoices.find(inv=>inv.invoiceNo===sale.invoiceNo):undefined;return <div className="table-actions">{invoice&&<button className="outline mini-action" onClick={()=>setPreviewInvoice(invoice)}><Printer size={14}/></button>}{sale&&<button className="outline mini-action danger" onClick={()=>deleteSale(sale)}><Trash2 size={14}/></button>}</div>}}/></>}
-      {outTab==='customer'&&<><Stats values={[['Customer Sales',String(customerSales.length),'invoices'],['Pieces Issued',String(saleCount(customerSales)),'customer pieces'],['Total Value',money(saleValue(customerSales)),'customer invoices'],['Available',String(customerStock.reduce((a,s)=>a+s.count,0)-saleCount(customerSales)),'ready pieces']]}/>{saleFormUI}<Table title="Customer stock issues" copy="Issued ready stock with generated tax invoices" headers={['ID','DATE','TYPE','CUSTOMER','GARMENT','SIZE','COUNT','PRICE','TOTAL','INVOICE']} rows={customerSaleRows} paged actions={row=>{const sale=sales.find(s=>s.id===row[0]);const invoice=sale?invoices.find(inv=>inv.invoiceNo===sale.invoiceNo):undefined;return <div className="table-actions">{invoice&&<button className="outline mini-action" onClick={()=>setPreviewInvoice(invoice)}><Printer size={14}/></button>}{sale&&<button className="outline mini-action danger" onClick={()=>deleteSale(sale)}><Trash2 size={14}/></button>}</div>}}/></>}
+      {outTab==='general'&&<><div className="filterbar ready-stock-filter"><label>Item<select value={materialOutItem} onChange={e=>setMaterialOutItem(e.target.value)}><option value="">All items</option>{materialOutItemOptions.map(it=><option key={it} value={it}>{it}</option>)}</select></label></div><Stats values={materialOutStats}/><article className="card measurement-form"><div className="form-title"><div><h2>Add stock out</h2><p>Record material issued to production/order.</p></div></div><div className="form-grid"><label>Date<input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label><label>Item<select value={form.item} onChange={e=>changeStockItem(e.target.value)}>{itemOptions}</select></label><label>Subcategory<input value={form.subcategory} onChange={e=>setForm({...form,subcategory:e.target.value})} placeholder={selectedItem?.[2]||'Manual subcategory'}/></label><label>Quantity<input type="number" min="0" value={form.qty} onChange={e=>setForm({...form,qty:Number(e.target.value)})}/></label><label className="wide">Order / Remarks<input value={form.remarks} onChange={e=>setForm({...form,remarks:e.target.value})}/></label></div><div className="form-actions"><button className="primary" onClick={addStockOut}><Plus size={16}/> Add stock out</button></div></article><Table title="Stock out history" copy="Material issue entries" headers={['ENTRY','DATE','ITEM','SUBCATEGORY','QTY','ORDER / REMARKS','PURPOSE']} rows={filteredStockOutHistory} paged/></>}
+      {outTab==='school'&&<><div className="filterbar ready-stock-filter"><label>Year<select value={outYear} onChange={e=>setOutYear(e.target.value)}><option value="">All years</option>{outSchoolYears.map(y=><option key={y}>{y}</option>)}</select></label><label>School<select value={outParty} onChange={e=>setOutParty(e.target.value)}><option value="">All schools</option>{outSchoolOptions.map(s=><option key={s}>{s}</option>)}</select></label><label>Gender<select value={outGender} onChange={e=>setOutGender(e.target.value)}><option value="">All</option>{outGenderOptions.map(g=><option key={g}>{g}</option>)}</select></label><label>Garment<select value={outGarment} onChange={e=>setOutGarment(e.target.value)}><option value="">All garments</option>{outGarmentOptions.map(g=><option key={g}>{g}</option>)}</select></label><label>Size<select value={outSize} onChange={e=>setOutSize(e.target.value)}><option value="">All sizes</option>{outSizeOptions.map(s=><option key={s}>{s}</option>)}</select></label></div><Stats values={schoolOutStats}/><Table title="School stock issues" copy="Issued ready stock with generated tax invoices" headers={['ID','DATE','GENDER','SCHOOL','GARMENT','SIZE','COUNT','PRICE','TOTAL','INVOICE']} rows={schoolSaleRows} paged action={<button className="primary" onClick={()=>openIssueStockModal('School')}><Plus size={15}/> Issue stock to school</button>} actions={row=>{const sale=sales.find(s=>s.id===row[0]);const invoice=sale?invoices.find(inv=>inv.invoiceNo===sale.invoiceNo):undefined;return <div className="table-actions">{invoice&&<button className="outline mini-action" onClick={()=>setPreviewInvoice(invoice)}><Printer size={14}/></button>}{sale&&<button className="outline mini-action danger" onClick={()=>deleteSale(sale)}><Trash2 size={14}/></button>}</div>}}/></>}
+      {outTab==='customer'&&<><div className="filterbar ready-stock-filter"><label>Year<select value={outYear} onChange={e=>setOutYear(e.target.value)}><option value="">All years</option>{customerYears.map(y=><option key={y}>{y}</option>)}</select></label><label>Customer<select value={outParty} onChange={e=>setOutParty(e.target.value)}><option value="">All customers</option>{outCustomerOptions.map(c=><option key={c} value={c}>{c}</option>)}</select></label><label>Garment<select value={outGarment} onChange={e=>setOutGarment(e.target.value)}><option value="">All garments</option>{customerGarmentOptions.map(g=><option key={g}>{g}</option>)}</select></label><label>Size<select value={outSize} onChange={e=>setOutSize(e.target.value)}><option value="">All sizes</option>{customerSizeOptions.map(s=><option key={s}>{s}</option>)}</select></label></div><Stats values={customerOutStats}/><Table title="Customer stock issues" copy="Issued ready stock with generated tax invoices" headers={['ID','DATE','TYPE','CUSTOMER','GARMENT','SIZE','COUNT','PRICE','TOTAL','INVOICE']} rows={customerSaleRows} paged action={<button className="primary" onClick={()=>openIssueStockModal('Customer')}><Plus size={15}/> Issue stock to customer</button>} actions={row=>{const sale=sales.find(s=>s.id===row[0]);const invoice=sale?invoices.find(inv=>inv.invoiceNo===sale.invoiceNo):undefined;return <div className="table-actions">{invoice&&<button className="outline mini-action" onClick={()=>setPreviewInvoice(invoice)}><Printer size={14}/></button>}{sale&&<button className="outline mini-action danger" onClick={()=>deleteSale(sale)}><Trash2 size={14}/></button>}</div>}}/></>}
       </div>
     </div>}
     {tab==='items'&&<div className="masters-grid"><article className="card measurement-form"><div className="form-title"><div><h2>Item head</h2><p>Add inventory items once. They will appear in Stock In and Stock Out.</p></div></div><div className="form-grid"><label>Item code<input value={itemForm.code} onChange={e=>setItemForm({...itemForm,code:e.target.value})} placeholder="Example: FAB-002"/></label><label>Item name<input value={itemForm.name} onChange={e=>setItemForm({...itemForm,name:e.target.value})} placeholder="Example: Blue Fabric"/></label><label>Subcategory<input value={itemForm.subcategory} onChange={e=>setItemForm({...itemForm,subcategory:e.target.value})} placeholder="Example: Fabric, Button, Zip"/></label><label>Unit<select value={itemForm.unit} onChange={e=>setItemForm({...itemForm,unit:e.target.value})}><option>Piece</option><option>Meter</option><option>Kg</option><option>Box</option><option>Roll</option></select></label><label>Opening qty<input type="number" min="0" value={itemForm.openingQty} onChange={e=>setItemForm({...itemForm,openingQty:Number(e.target.value)})}/></label></div><div className="form-actions"><button className="primary" onClick={addItem}><Save size={16}/> Save item</button></div></article><article className="card jobs module-table"><div className="cardhead"><div><h2>Item head list</h2><p>These items are used in stock in and stock out dropdowns.</p></div></div><table><thead><tr><th>ITEM CODE</th><th>ITEM</th><th>SUBCATEGORY</th><th>UNIT</th><th>AVAILABLE QTY</th><th>ACTION</th></tr></thead><tbody>{visibleItems.map(item=><tr key={item[0]}><td><strong>{item[0]}</strong></td><td>{item[1]}</td><td>{item[2]}</td><td>{item[3]}</td><td>{item[4]}</td><td><button className="danger-btn" onClick={()=>deleteItem(item)}><Trash2 size={14}/> Delete</button></td></tr>)}</tbody></table>{normalizedItems.length>0&&<div className="table-footer paginated-footer"><span>Showing {((safeItemPage-1)*itemPageSize)+1}-{Math.min(safeItemPage*itemPageSize,normalizedItems.length)} of {normalizedItems.length} entries</span><div className="pager"><button className="outline" disabled={safeItemPage===1} onClick={()=>setItemPage(p=>Math.max(1,p-1))}>Prev</button><span>Page {safeItemPage} / {itemPageCount}</span><button className="outline" disabled={safeItemPage===itemPageCount} onClick={()=>setItemPage(p=>Math.min(itemPageCount,p+1))}>Next</button></div></div>}</article></div>}
     {partyStockModal}
+    {issueStockModal}
+    {smsDraft&&<SmsComposerModal draft={smsDraft} setDraft={setSmsDraft} onClose={()=>setSmsDraft(null)} onSend={sendStockIssueSms} sending={sendingSms} cancelLabel="Skip SMS"/>}
     {confirmStock&&<div className="salary-modal-overlay" onClick={()=>setConfirmStock(null)}><div className="salary-modal confirm-dialog" onClick={e=>e.stopPropagation()}><div className="confirm-icon"><AlertTriangle size={22}/></div><h3>Delete ready stock entry?</h3><p>This permanently removes <strong>{confirmStock.school}</strong> · <strong>{confirmStock.garment} (size {confirmStock.size})</strong> × <strong>{confirmStock.count} pcs</strong> from school ready stock. This action cannot be undone.</p><div className="salary-modal-actions"><button className="outline" onClick={()=>setConfirmStock(null)}>Cancel</button><button className="danger-btn" onClick={confirmDeleteSchoolStock}><Trash2 size={14}/> Yes, delete entry</button></div></div></div>}
     {previewInvoice&&<PrintPreview doc={<InvoiceDocument invoice={previewInvoice} company={company} garment/>} onClose={()=>setPreviewInvoice(null)}/>}
     {showBarcodeScanner&&<BarcodeScannerModal onScan={scanForSale?handleSaleBarcodeScan:handleBarcodeScanResult} onClose={()=>{setShowBarcodeScanner(false);setScanForSale(false)}}/>}
