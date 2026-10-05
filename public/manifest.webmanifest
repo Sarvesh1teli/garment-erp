@@ -1,0 +1,24 @@
+{
+  "name": "Teli ThreadFlow Garment ERP",
+  "short_name": "ThreadFlow",
+  "description": "Garment production, inventory, measurement and billing ERP",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0b3f37",
+  "theme_color": "#007c68",
+  "id": "/",
+  "icons": [
+    {
+      "src": "threadflow-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "threadflow-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

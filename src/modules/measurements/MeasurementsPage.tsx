@@ -81,12 +81,6 @@ export function Measurements({company,schools,students,setStudents}:{company:Com
   const addStudent=()=>{if(!form.name.trim())return;const saved={...form,id:typeof crypto!=='undefined'&&crypto.randomUUID?crypto.randomUUID():`st_${Date.now()}_${Math.random().toString(36).slice(2,9)}`,sizes:{...form.sizes}};setStudents(current=>[...current,saved]);setForm({...form,name:'',admission:'',sizes:{}});setAddedStudent(saved)};
   const switchMeasurementTab=(next:'entry'|'students'|'totals'|'stock')=>{
     setMenuPos(null);
-    if(next==='totals'){
-      setSummarySchool(current=>current&&students.some(student=>student.school===current)?current:'');
-      setSummaryYear(current=>current&&students.some(student=>student.year===current)?current:'');
-      setSummaryClass(current=>current&&students.some(student=>(!summarySchool||student.school===summarySchool)&&student.className===current)?current:'');
-      setSummarySection(current=>current&&students.some(student=>(!summarySchool||student.school===summarySchool)&&(!summaryClass||student.className===summaryClass)&&student.section===current)?current:'');
-    }
     setMeasurementTab(next);
   };
   const addCustomGarment=()=>{const name=newGarment.trim();if(!name)return;setCustomGarments(current=>current.some(item=>item.toLowerCase()===name.toLowerCase())||defaultGarments.some(item=>item.toLowerCase()===name.toLowerCase())?current:[...current,name]);setForm(current=>({...current,sizes:{...current.sizes,[name]:current.sizes[name]||''}}));setEditForm(current=>current?{...current,sizes:{...current.sizes,[name]:current.sizes[name]||''}}:current);setNewGarment('')};
@@ -110,7 +104,7 @@ export function Measurements({company,schools,students,setStudents}:{company:Com
   useEffect(()=>{
     setSummaryClass(current=>current&&students.some(student=>(!summarySchool||student.school===summarySchool)&&(!summaryYear||student.year===summaryYear)&&student.className===current)?current:'');
     setSummarySection(current=>current&&students.some(student=>(!summarySchool||student.school===summarySchool)&&(!summaryYear||student.year===summaryYear)&&(!summaryClass||student.className===summaryClass)&&student.section===current)?current:'');
-  },[students,summarySchool,summaryYear]);
+  },[students,summarySchool,summaryYear,summaryClass]);
   useEffect(()=>{setStudentPage(1)},[studentSearch,studentSchool,filterClass,studentGender,studentYear,studentPageSize]);
   useEffect(()=>{if(studentPage>studentPageCount)setStudentPage(studentPageCount)},[studentPage,studentPageCount]);
   useEffect(()=>{setSummarySizePage(1)},[summarySchool,summaryClass,summarySection,summaryGender,summaryYear,summarySizePageSize,customGarments.length]);

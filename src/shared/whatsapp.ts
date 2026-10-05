@@ -1,4 +1,4 @@
-﻿import type { Invoice, InvoicePayment } from "./types";
+import type { Invoice, InvoicePayment } from "./types";
 import type { CompanySettings } from "../modules/settings/SettingsPage";
 
 export function cleanPhoneForWhatsApp(phone: string): string {
@@ -97,6 +97,15 @@ export function formatInvoiceWhatsAppMessage(invoice: Invoice, company?: Company
   const sgst = ((invoice.taxableAmount || 0) * (invoice.sgst || 0)) / 100;
   const totalGst = cgst + sgst;
 
+  let breakdownText = "";
+  if (invoice.items && invoice.items.length > 0) {
+    const activeItems = invoice.items.filter(i => i.qty > 0);
+    if (activeItems.length > 0) {
+      breakdownText = `• *Items Breakdown:*\n` +
+        activeItems.map(i => `   ▫ ${i.garment} (${i.size}) × ${i.qty} pcs @ Rs. ${i.rate}`).join("\n") + "\n";
+    }
+  }
+
   return `*TAX INVOICE* 🧾
 *${compName.toUpperCase()}*
 ━━━━━━━━━━━━━━━━━━━━━
@@ -106,9 +115,9 @@ export function formatInvoiceWhatsAppMessage(invoice: Invoice, company?: Company
 ${invoice.customerPhone ? `📱 *Mobile:* ${invoice.customerPhone}\n` : ""}${invoice.customerAddress ? `📍 *Address:* ${invoice.customerAddress}\n` : ""}
 📦 *Product Details:*
 • *Product:* ${invoice.product}
-• *Quantity:* ${invoice.qty} ${invoice.unit || "PCS"}
+• *Total Quantity:* ${invoice.qty} ${invoice.unit || "PCS"}
 • *Rate:* Rs. ${Number(invoice.rate).toLocaleString("en-IN")}
-• *Taxable Value:* Rs. ${Number(invoice.taxableAmount).toLocaleString("en-IN")}
+${breakdownText}• *Taxable Value:* Rs. ${Number(invoice.taxableAmount).toLocaleString("en-IN")}
 ${totalGst > 0 ? `• *GST:* Rs. ${Number(totalGst).toLocaleString("en-IN")}\n` : ""}💰 *TOTAL INVOICE AMOUNT:* *Rs. ${Number(invoice.totalAmount).toLocaleString("en-IN")}*
 📊 *Status:* ${invoice.status || "Pending"}
 

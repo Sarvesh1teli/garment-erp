@@ -3,12 +3,23 @@
   <head>
     <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-    <meta name="theme-color" content="#007c68"/>
+    <meta name="theme-color" content="#007c68" id="app-theme-color"/>
     <meta name="apple-mobile-web-app-capable" content="yes"/>
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
-    <link rel="manifest" href="/manifest.webmanifest"/>
+    <link rel="manifest" href="/manifest.webmanifest" id="app-manifest"/>
     <link rel="icon" type="image/png" href="/threadflow-logo.png"/>
     <title>Teli ThreadFlow Garment</title>
+    <script>
+      if (location.pathname.replace(/\/$/, '') === '/school-orders' || new URLSearchParams(location.search).get('app') === 'school') {
+        document.title = 'School Uniform Order';
+        document.getElementById('app-manifest').setAttribute('href', '/school-uniform-order.webmanifest');
+        document.getElementById('app-theme-color').setAttribute('content', '#0b3f37');
+        var appleTitle = document.createElement('meta');
+        appleTitle.name = 'apple-mobile-web-app-title';
+        appleTitle.content = 'Uniform Order';
+        document.head.appendChild(appleTitle);
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

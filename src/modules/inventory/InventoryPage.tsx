@@ -4,7 +4,7 @@ import type { CompanySettings } from '../settings/SettingsPage';
 import type { CustomerStock, Invoice, School, SchoolBarcode, SchoolStock, StockSale, Student } from '../../shared/types';
 import { InvoiceDocument } from '../billing/BillingPaymentsPage';
 import { PrintPreview, BarcodeImage, BarcodeScannerModal, Stats, Table } from '../../shared/ui';
-import { API_BASE_URL, getStoredTenantId, money, useStoredState } from '../../shared/utils';
+import { API_BASE_URL, consolidateStockSales, getStoredTenantId, money, useStoredState } from '../../shared/utils';
 import { SmsComposerModal, type SmsDraft } from '../../shared/SmsComposerModal';
 import { formatStockOutSms, sendSmsViaGateway } from '../../shared/sms';
 
@@ -45,6 +45,22 @@ export function InventoryPage({company,customers,schools,navParams,onNavigate}:{
   const [schoolStock,setSchoolStock]=useStoredState<SchoolStock[]>('garment-school-stock',[]);
   const [customerStock,setCustomerStock]=useStoredState<CustomerStock[]>('garment-customer-stock',[]);
   const [sales,setSales]=useStoredState<StockSale[]>('garment-stock-sales',[]);
+  useEffect(() => {
+    if (sales.length > 1) {
+      const seen = new Set<string>();
+      const hasDuplicates = sales.some(s => {
+        const inv = s.invoiceNo?.trim();
+        if (inv && inv !== '-') {
+          if (seen.has(inv)) return true;
+          seen.add(inv);
+        }
+        return false;
+      });
+      if (hasDuplicates) {
+        setSales(current => consolidateStockSales(current));
+      }
+    }
+  }, [sales, setSales]);
   const [invoices,setInvoices]=useStoredState<Invoice[]>('garment-invoices',[]);
   const [students]=useStoredState<Student[]>('garment-students',[]);
 const [schoolBarcodes,setSchoolBarcodes]=useStoredState<SchoolBarcode[]>('garment-school-barcodes',[]);
@@ -183,17 +199,57 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
   const stockForParty=(type:PartyKind,party:string)=>type==='School'?schoolStock.filter(s=>s.school===party):customerStock.filter(s=>s.customer===party);
   const availableQty=(type:PartyKind,party:string,garment:string,size:string,gender='')=>{
     const inQty=stockForParty(type,party).filter(s=>s.garment===garment&&s.size===size&&(!gender||type!=='School'||(s as SchoolStock).gender===gender)).reduce((a,s)=>a+s.count,0);
-    const outQty=sales.filter(s=>s.type===type&&s.party===party&&s.garment===garment&&s.size===size&&(!gender||type!=='School'||s.gender===gender)).reduce((a,s)=>a+s.count,0);
+    const outQty=sales.filter(s=>s.type===type&&s.party===party).reduce((sum,s)=>{
+      if(s.items && s.items.length>0){
+        const matches=s.items.filter(it=>it.garment===garment&&it.size===size&&(!gender||type!=='School'||!it.gender||it.gender===gender));
+        return sum+matches.reduce((a,it)=>a+it.qty,0);
+      }
+      if(s.garment===garment&&s.size===size&&(!gender||type!=='School'||!s.gender||s.gender===gender)){
+        return sum+s.count;
+      }
+      return sum;
+    },0);
     const specificAvail=Math.max(0,inQty-outQty);
     if(specificAvail>0||!gender||type!=='School')return specificAvail;
     const inQtyAny=stockForParty(type,party).filter(s=>s.garment===garment&&s.size===size).reduce((a,s)=>a+s.count,0);
-    const outQtyAny=sales.filter(s=>s.type===type&&s.party===party&&s.garment===garment&&s.size===size).reduce((a,s)=>a+s.count,0);
+    const outQtyAny=sales.filter(s=>s.type===type&&s.party===party).reduce((sum,s)=>{
+      if(s.items && s.items.length>0){
+        const matches=s.items.filter(it=>it.garment===garment&&it.size===size);
+        return sum+matches.reduce((a,it)=>a+it.qty,0);
+      }
+      if(s.garment===garment&&s.size===size){
+        return sum+s.count;
+      }
+      return sum;
+    },0);
     return Math.max(0,inQtyAny-outQtyAny);
   };
   const summaryRows=useMemo(()=>{
     const map:Record<string,{party:string;garment:string;size:string;added:number;issued:number}>={};
     stockRows.forEach(row=>{const party=summaryType==='School'?(row as SchoolStock).school:(row as CustomerStock).customer;if(summaryParty&&party!==summaryParty)return;if(entriesYear&&(row.date||'').slice(0,4)!==entriesYear)return;if(summaryType==='School'&&entriesGender&&(row as SchoolStock).gender!==entriesGender)return;if(entriesGarment&&row.garment!==entriesGarment)return;if(entriesSize&&row.size!==entriesSize)return;const k=`${party}||${row.garment}||${row.size}`;map[k]=map[k]||{party,garment:row.garment,size:row.size,added:0,issued:0};map[k].added+=row.count});
-    sales.filter(s=>s.type===summaryType).forEach(s=>{if(summaryParty&&s.party!==summaryParty)return;if(entriesYear&&(s.date||'').slice(0,4)!==entriesYear)return;if(summaryType==='School'&&entriesGender&&s.gender!==entriesGender)return;if(entriesGarment&&s.garment!==entriesGarment)return;if(entriesSize&&s.size!==entriesSize)return;const k=`${s.party}||${s.garment}||${s.size}`;map[k]=map[k]||{party:s.party,garment:s.garment,size:s.size,added:0,issued:0};map[k].issued+=s.count});
+    sales.filter(s=>s.type===summaryType).forEach(s=>{
+      if (s.items && s.items.length > 0) {
+        s.items.forEach(it => {
+          if(summaryParty&&s.party!==summaryParty)return;
+          if(entriesYear&&(s.date||'').slice(0,4)!==entriesYear)return;
+          if(summaryType==='School'&&entriesGender&&(it.gender||s.gender)!==entriesGender)return;
+          if(entriesGarment&&it.garment!==entriesGarment)return;
+          if(entriesSize&&it.size!==entriesSize)return;
+          const k=`${s.party}||${it.garment}||${it.size}`;
+          map[k]=map[k]||{party:s.party,garment:it.garment,size:it.size,added:0,issued:0};
+          map[k].issued+=it.qty;
+        });
+      } else {
+        if(summaryParty&&s.party!==summaryParty)return;
+        if(entriesYear&&(s.date||'').slice(0,4)!==entriesYear)return;
+        if(summaryType==='School'&&entriesGender&&s.gender!==entriesGender)return;
+        if(entriesGarment&&s.garment!==entriesGarment)return;
+        if(entriesSize&&s.size!==entriesSize)return;
+        const k=`${s.party}||${s.garment}||${s.size}`;
+        map[k]=map[k]||{party:s.party,garment:s.garment,size:s.size,added:0,issued:0};
+        map[k].issued+=s.count;
+      }
+    });
     return Object.values(map).map(r=>({...r,available:r.added-r.issued})).sort((a,b)=>a.party.localeCompare(b.party)||a.garment.localeCompare(b.garment)||a.size.localeCompare(b.size));
   },[stockRows,summaryType,summaryParty,entriesYear,entriesGender,entriesGarment,entriesSize,sales]);
   const itemPageSize=10;
@@ -230,8 +286,6 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
   const customerRows=customerStock.map(s=>[s.id,s.date,s.customer,s.garment,s.size,String(s.count),s.remarks||'-']);
   const summaryLevelRows=summaryRows.map(r=>[r.party,r.garment,r.size,String(r.added),String(r.issued),String(r.available)]);
   const totalAvailable=summaryRows.reduce((a,r)=>a+r.available,0);
-  const schoolSaleRows=sales.filter(s=>s.type==='School').filter(s=>(!outYear||(s.date||'').slice(0,4)===outYear)&&(!outParty||s.party===outParty)&&(!outGender||s.gender===outGender)&&(!outGarment||s.garment===outGarment)&&(!outSize||s.size===outSize)).map(s=>[s.id,s.date,s.gender||'-',s.party,s.garment,s.size,String(s.count),money(s.rate),money(s.total),s.invoiceNo]);
-  const customerSaleRows=sales.filter(s=>s.type==='Customer').map(s=>[s.id,s.date,s.party,s.garment,s.size,String(s.count),money(s.rate),money(s.total),s.invoiceNo]);
   const saleCount=(rows:StockSale[])=>rows.reduce((a,s)=>a+s.count,0);
   const saleValue=(rows:StockSale[])=>rows.reduce((a,s)=>a+s.total,0);
   const schoolSales=sales.filter(s=>s.type==='School');
@@ -241,9 +295,9 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
   const outSchoolYears=schoolYears;
   const outSchoolOptions=useMemo(()=>Array.from(new Set([...schoolSales.map(s=>s.party),...schoolStock.map(s=>s.school),...schools.map(s=>s.name)].filter(Boolean))).sort(),[schoolSales,schoolStock,schools]);
   const outCustomerOptions=useMemo(()=>Array.from(new Set([...customerSales.map(s=>s.party),...customerStock.map(s=>s.customer),...customers.map(c=>c[1])].filter(Boolean))).sort(),[customerSales,customerStock,customers]);
-  const outGenderOptions=Array.from(new Set([...schoolSales.map(s=>s.gender),...schoolStock.map(s=>s.gender)].filter(Boolean))).sort();
-  const outGarmentOptions=Array.from(new Set([...schoolSales.map(s=>s.garment),...schoolStock.map(s=>s.garment),...defaultGarments,...customGarments].filter(Boolean))).sort();
-  const outSizeOptions=Array.from(new Set([...schoolSales.map(s=>s.size),...schoolStock.map(s=>s.size),...defaultSizes].filter(Boolean))).sort(sortSizes);
+  const outGenderOptions=Array.from(new Set([...schoolSales.flatMap(s=>s.items?.map(it=>it.gender)||[s.gender]),...schoolStock.map(s=>s.gender)].filter(Boolean))).sort();
+  const outGarmentOptions=Array.from(new Set([...schoolSales.flatMap(s=>s.items?.map(it=>it.garment)||[s.garment]),...schoolStock.map(s=>s.garment),...defaultGarments,...customGarments].filter(Boolean))).sort();
+  const outSizeOptions=Array.from(new Set([...schoolSales.flatMap(s=>s.items?.map(it=>it.size)||[s.size]),...schoolStock.map(s=>s.size),...defaultSizes].filter(Boolean))).sort(sortSizes);
   const materialSubcategoryOptions=useMemo(()=>Array.from(new Set(normalizedItems.map(item=>item[2]).filter(b=>b&&b!=='-'))).sort(),[normalizedItems]);
   const filteredMaterialItems=useMemo(()=>normalizedItems.filter(item=>{
     if(materialSubcategory&&item[2]!==materialSubcategory)return false;
@@ -392,6 +446,25 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
     ['Available',String(customerOutAvailable),'ready pieces']
   ];
 
+  const schoolSaleRows=schoolOutSalesList.map(s=>{
+    const isMulti=Boolean(s.items && s.items.length > 1);
+    const garmentLabel = isMulti ? `${s.garment} (${s.items!.length} items)` : s.garment;
+    const rateLabel = isMulti ? 'Multiple' : money(s.rate);
+    return [
+      s.id,
+      s.date,
+      s.gender||'-',
+      s.party,
+      garmentLabel,
+      s.size,
+      String(s.count),
+      rateLabel,
+      money(s.total),
+      s.invoiceNo
+    ];
+  });
+  const customerSaleRows=customerOutSalesList.map(s=>[s.id,s.date,s.party,s.garment,s.size,String(s.count),money(s.rate),money(s.total),s.invoiceNo]);
+
   const summaryAdded=summaryRows.reduce((a,r)=>a+r.added,0);
   const summaryIssued=summaryRows.reduce((a,r)=>a+r.issued,0);
   const summaryPartyCount=new Set(summaryRows.map(r=>r.party)).size;
@@ -528,7 +601,7 @@ const saveScanStockIn=async()=>{
     const number=saleForm.invoiceNo.trim()||`INV-${String(invoices.length+1).padStart(3,'0')}`;
     if(invoices.some(inv=>inv.invoiceNo===number)){setMessage('Invoice number already exists. Use a different number.');return}
     const sale:StockSale={id:`SS-${Date.now()}`,date:saleForm.date,type:saleForm.type,party:saleForm.party,gender:saleForm.type==='School'?saleForm.gender:'',garment,size,count:saleForm.count,rate:numericRate,total,invoiceNo:number,remarks:saleForm.remarks.trim()||'-'};
-    const invoice:Invoice={invoiceNo:number,invoiceDate:saleForm.date,dueDate:'',state:'',reverseCharge:'NO',customer:saleForm.party,customerPhone:'',customerGst:'',customerAddress:'',shipTo:saleForm.party,shipAddress:'',shipGst:'',product:`${garment} (${size})`,hsn:'',qty:saleForm.count,unit:'PCS',rate:numericRate,cgst:0,sgst:0,taxableAmount:total,totalAmount:total,status:'Pending',terms:'This is an electronically generated document. All disputes are subject to local jurisdiction.'};
+    const invoice:Invoice={invoiceNo:number,invoiceDate:saleForm.date,dueDate:'',state:'',reverseCharge:'NO',customer:saleForm.party,customerPhone:'',customerGst:'',customerAddress:'',shipTo:saleForm.party,shipAddress:'',shipGst:'',product:`${garment} (${size})`,hsn:'',qty:saleForm.count,unit:'PCS',rate:numericRate,cgst:0,sgst:0,taxableAmount:total,totalAmount:total,status:'Pending',terms:'This is an electronically generated document. All disputes are subject to local jurisdiction.',items:[{garment,size,qty:saleForm.count,rate:numericRate,amount:total,gender:saleForm.gender}],gstPercent:0};
     setSales(current=>[sale,...current]);
     setInvoices(current=>[invoice,...current]);
     setMessage(`Stock issued to ${saleForm.party}. Invoice ${number} created for ${money(total)}.`);
@@ -546,7 +619,14 @@ const saveScanStockIn=async()=>{
     setShowIssueStockModal(false);
   };
   const sendStockIssueSms=async()=>{if(!smsDraft)return;setSendingSms(true);const result=await sendSmsViaGateway({recipientName:smsDraft.recipientName,recipientPhone:smsDraft.recipientPhone,message:smsDraft.message,referenceType:'stock_issue',referenceId:smsDraft.title});setSendingSms(false);setMessage(result.message);if(result.ok)setSmsDraft(null)};
-  const deleteSale=(sale:StockSale)=>{if(!window.confirm(`Delete stock issue ${sale.invoiceNo}? This also removes its invoice.`))return;setSales(current=>current.filter(s=>s.id!==sale.id));setInvoices(current=>current.filter(inv=>inv.invoiceNo!==sale.invoiceNo))};
+  const deleteSale=(sale:StockSale)=>{
+    if(!window.confirm(`Delete stock issue ${sale.invoiceNo}? This also removes its invoice.`))return;
+    const invNo = sale.invoiceNo?.trim();
+    setSales(current=>current.filter(s=>s.id!==sale.id && (!invNo || invNo === '-' || s.invoiceNo?.trim() !== invNo)));
+    if(invNo && invNo !== '-'){
+      setInvoices(current=>current.filter(inv=>inv.invoiceNo!==invNo));
+    }
+  };
 
   const openAddPartyStock=()=>{setEditEntry(null);setPartyForm(emptyPartyForm());setShowPartyStock(true)};
   const closePartyStockForm=()=>{setShowPartyStock(false);setEditEntry(null);setPartyForm(emptyPartyForm())};
@@ -603,7 +683,7 @@ const saveScanStockIn=async()=>{
         <span style={{font:'600 14px Manrope',color:'#123d35',display:'flex',alignItems:'center',gap:8}}>
           📍 Working on stock for <strong>{String(navParams?.fromSchool)}</strong>
         </span>
-        <button className="primary" style={{display:'flex',alignItems:'center',gap:6,fontSize:13,padding:'8px 16px',borderRadius:8}} onClick={()=>onNavigate('Customers & Schools',{openSchool:String(navParams?.fromSchool)})}>
+        <button className="primary" style={{display:'flex',alignItems:'center',gap:6,fontSize:13,padding:'8px 16px',borderRadius:8}} onClick={()=>onNavigate(String(navParams?.fromPage || 'Production'),{openSchool:String(navParams?.fromSchool)})}>
           <ArrowLeft size={16}/> Back to {String(navParams?.fromSchool)} Dashboard
         </button>
       </div>

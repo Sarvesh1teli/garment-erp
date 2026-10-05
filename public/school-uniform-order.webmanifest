@@ -1,0 +1,18 @@
+{
+  "name": "School Uniform Order",
+  "short_name": "Uniform Order",
+  "description": "Create school garment orders and track supplier acknowledgements.",
+  "id": "/school-orders/",
+  "start_url": "/school-orders/",
+  "scope": "/school-orders/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "background_color": "#f6f9fb",
+  "theme_color": "#0b3f37",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {"src": "/school-orders/threadflow-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "/school-orders/threadflow-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}

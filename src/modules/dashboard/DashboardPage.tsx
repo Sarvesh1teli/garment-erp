@@ -1,46 +1,71 @@
 import { useState } from 'react';
-import { AlertTriangle, PackageCheck, Scissors, Users, WalletCards } from 'lucide-react';
-import { Table, Stats } from '../../shared/ui';
-import { money, workTypeCode } from '../../shared/utils';
-import { defaultWorkTypes } from '../../shared/defaults';
-import type { AdvanceEntry, Assignment, Employee, WorkEntry, WorkType } from '../../shared/types';
+import { Boxes, CheckCircle2, Clock3, IndianRupee, PackageCheck, ReceiptText, Shirt, Truck, Users } from 'lucide-react';
+import { Stats, Table } from '../../shared/ui';
+import { money, useStoredState } from '../../shared/utils';
+import type { Assignment, Invoice, InvoicePayment, School, SchoolStock, StockSale, Student } from '../../shared/types';
 
-type Status='Pending'|'In Progress'|'Completed';
-const statusOf=(a:Assignment):Status=>a.works.length&&a.works.every(w=>w.done>=w.qty)?'Completed':a.works.some(w=>w.done>0)?'In Progress':'Pending';
-const workTotal=(a:Assignment)=>a.works.reduce((s,w)=>s+w.qty,0);
-const workDone=(a:Assignment)=>a.works.reduce((s,w)=>s+Math.min(w.done,w.qty),0);
-const workRate=(workTypes:WorkType[],id:string)=>{const wt=workTypes.find(x=>x.id===id)||defaultWorkTypes.find(x=>x.id===id);return wt?.rate||0};
-const workTypeName=(workTypes:WorkType[],id:string)=>{const wt=workTypes.find(x=>x.id===id)||defaultWorkTypes.find(x=>x.id===id);return wt?`${workTypeCode(wt)} - ${wt.name}`:'-'};
+const parseMoney = (value = '') => Number((value.match(/\d[\d,]*(?:\.\d+)?/)?.[0] || '0').replace(/,/g, ''));
+const assignmentQty = (assignment: Assignment) => assignment.works.reduce((sum, work) => sum + work.qty, 0);
+const assignmentDone = (assignment: Assignment) => assignment.works.reduce((sum, work) => sum + Math.min(work.done, work.qty), 0);
 
-export function DashboardPage({employees,workTypes,advances,workEntries,assignments,customers}:{employees:Employee[];workTypes:WorkType[];advances:AdvanceEntry[];workEntries:WorkEntry[];assignments:Assignment[];customers:string[][]}){
-  const [fy,setFy]=useState(()=>{const now=new Date();return `${now.getFullYear()}-${String((now.getFullYear()+1)%100).padStart(2,'0')}`});
-  const [from,setFrom]=useState(()=>`${new Date().getFullYear()}-04-01`);
-  const [to,setTo]=useState(()=>`${new Date().getFullYear()+1}-03-31`);
-  const changeFy=(value:string)=>{setFy(value);const y=Number(value.slice(0,4));setFrom(`${y}-04-01`);setTo(`${y+1}-03-31`)};
-  const activeStaff=employees.filter(e=>e.status==='Active');
-  const periodAssignments=assignments.filter(a=>a.date>=from&&a.date<=to);
-  const periodWork=workEntries.filter(w=>w.date>=from&&w.date<=to);
-  const periodAdvances=advances.filter(a=>a.date>=from&&a.date<=to);
-  const activeAssignments=periodAssignments.filter(a=>statusOf(a)!=='Completed');
-  const completedAssignments=periodAssignments.filter(a=>statusOf(a)==='Completed');
-  const totalAssigned=periodAssignments.reduce((s,a)=>s+workTotal(a),0);
-  const totalDone=periodAssignments.reduce((s,a)=>s+workDone(a),0);
-  const workAmount=periodWork.reduce((s,w)=>s+w.quantity*workRate(workTypes,w.workTypeId),0);
-  const advancesTotal=periodAdvances.reduce((s,a)=>s+a.amount,0);
-  const stageData=workTypes.filter(wt=>wt.status==='Active').map(wt=>{const assigned=periodAssignments.reduce((s,a)=>s+a.works.filter(w=>w.workTypeId===wt.id).reduce((x,w)=>x+w.qty,0),0);const done=periodAssignments.reduce((s,a)=>s+a.works.filter(w=>w.workTypeId===wt.id).reduce((x,w)=>x+Math.min(w.done,w.qty),0),0);return {name:workTypeName(workTypes,wt.id),assigned,done}}).filter(x=>x.assigned>0);
-  const jobs=activeAssignments.slice(0,6).map(a=>[a.id,a.cuttingNo,customerName(customers,a.customerId),nameOf(employees,a.employeeId),a.works.map(w=>workTypeName(workTypes,w.workTypeId)).join(', '),`${workDone(a)}/${workTotal(a)}`,statusOf(a)]);
-  const completion=totalAssigned?Math.round(totalDone/totalAssigned*100):0;
-  const today=new Date().toISOString().slice(0,10);
-  const todayEntries=periodWork.filter(w=>w.date===today);
-  return <section className="content dashboard-page">
-    <div className="filterbar salary-filter yearwise-filter"><span className="yearwise-title">YEARWISE</span><label>Financial Year<select value={fy} onChange={e=>changeFy(e.target.value)}><option>2026-27</option><option>2025-26</option></select></label><label>From<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label><label>To<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label></div>
-    <Stats values={[['Active Assignments',String(activeAssignments.length),`${completedAssignments.length} completed`],['Pieces Assigned',String(totalAssigned),'across all cuttings'],['Pieces Completed',String(totalDone),`${completion}% of assigned`],['Wage Value',money(workAmount),`${todayEntries.length} entries today`]]}/>
-    <div className="grid">
-      <article className="card production"><div className="cardhead"><div><h2>Production overview</h2><p>Assigned vs completed pieces by work type</p></div></div><div className="stageTotal"><div><small>TOTAL IN PRODUCTION</small><strong>{totalAssigned}<em> pieces</em></strong></div><span>{completion}% done</span></div><div className="stages">{stageData.map(s=><div key={s.name}><div className="stageLabel"><span>{s.name}</span><strong>{s.done} / {s.assigned}</strong></div><div className="bar"><i style={{width:`${s.assigned?Math.round(s.done/s.assigned*100):0}%`}}/></div></div>)}</div></article>
-      <article className="card activity"><div className="cardhead"><div><h2>Work floor summary</h2><p>People, work and money</p></div></div><div className="activityrow"><div className="dot green"><Users/></div><div><strong>{activeStaff.length} / {employees.length}</strong><span>Active staff members</span></div><b>{employees.length?Math.round(activeStaff.length/employees.length*100):0}%</b></div><div className="activityrow"><div className="dot blue"><PackageCheck/></div><div><strong>{totalDone} pcs</strong><span>Completed across cuttings</span></div><b>{completion}%</b></div><div className="activityrow"><div className="dot amber"><Scissors/></div><div><strong>{activeAssignments.length}</strong><span>Work in progress</span></div><b>{activeAssignments.length}</b></div><div className="activityrow"><div className="dot amber"><WalletCards/></div><div><strong>{money(advancesTotal)}</strong><span>Advances given</span></div><b>{advances.length}</b></div></article>
+export function DashboardPage({ assignments, schools, students }: { assignments: Assignment[]; schools: School[]; students: Student[] }) {
+  const now = new Date();
+  const currentFyStart = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+  const [fy, setFy] = useState(`${currentFyStart}-${String((currentFyStart + 1) % 100).padStart(2, '0')}`);
+  const [from, setFrom] = useState(`${currentFyStart}-04-01`);
+  const [to, setTo] = useState(`${currentFyStart + 1}-03-31`);
+  const [invoices] = useStoredState<Invoice[]>('garment-invoices', []);
+  const [payments] = useStoredState<InvoicePayment[]>('garment-invoice-payments', []);
+  const [schoolStock] = useStoredState<SchoolStock[]>('garment-school-stock', []);
+  const [sales] = useStoredState<StockSale[]>('garment-stock-sales', []);
+  const [collections] = useStoredState<string[][]>('garment-school-collections', []);
+  const [expenses] = useStoredState<string[][]>('garment-expenses', []);
+
+  const changeFy = (value: string) => { const year = Number(value.slice(0, 4)); setFy(value); setFrom(`${year}-04-01`); setTo(`${year + 1}-03-31`); };
+  const inPeriod = (date?: string) => !!date && date >= from && date <= to;
+  const periodInvoices = invoices.filter(invoice => inPeriod(invoice.invoiceDate));
+  const periodPayments = payments.filter(payment => inPeriod(payment.date));
+  const periodSales = sales.filter(sale => inPeriod(sale.date));
+  const periodExpenses = expenses.filter(row => inPeriod(row[5]));
+  const periodCollections = collections.filter(row => inPeriod(row[1]));
+  const paidFor = (invoiceNo: string) => payments.filter(payment => payment.invoiceNo === invoiceNo).reduce((sum, payment) => sum + Number(payment.amount || 0) + Number(payment.discount || 0), 0);
+  const totalInvoiced = periodInvoices.reduce((sum, invoice) => sum + invoice.totalAmount, 0);
+  const totalCollected = periodPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const outstanding = periodInvoices.reduce((sum, invoice) => sum + Math.max(0, invoice.totalAmount - paidFor(invoice.invoiceNo)), 0);
+  const expenseTotal = periodExpenses.reduce((sum, row) => sum + parseMoney(row[6]), 0);
+  const deliveredPieces = periodSales.reduce((sum, sale) => sum + Number(sale.count || 0), 0);
+  const readyPieces = schoolStock.reduce((sum, stock) => sum + Math.max(0, Number(stock.count || 0)), 0);
+  const measuredStudents = students.filter(student => Object.values(student.sizes || {}).some(Boolean)).length;
+  const activeSchools = schools.filter(school => school.status === 'Active').length;
+  const activeAssignments = assignments.filter(assignment => assignmentDone(assignment) < assignmentQty(assignment));
+  const assignedPieces = assignments.reduce((sum, assignment) => sum + assignmentQty(assignment), 0);
+  const completedPieces = assignments.reduce((sum, assignment) => sum + assignmentDone(assignment), 0);
+  const productionPct = assignedPieces ? Math.round(completedPieces / assignedPieces * 100) : 0;
+  const pendingInvoices = periodInvoices.filter(invoice => Math.max(0, invoice.totalAmount - paidFor(invoice.invoiceNo)) > 0);
+
+  const schoolRows = schools.map(school => {
+    const schoolStudents = students.filter(student => student.school === school.name);
+    const measured = schoolStudents.filter(student => Object.values(student.sizes || {}).some(Boolean)).length;
+    const delivered = periodSales.filter(sale => sale.party === school.name).reduce((sum, sale) => sum + Number(sale.count || 0), 0);
+    const schoolInvoices = periodInvoices.filter(invoice => invoice.customer === school.name);
+    const billed = schoolInvoices.reduce((sum, invoice) => sum + invoice.totalAmount, 0);
+    const due = schoolInvoices.reduce((sum, invoice) => sum + Math.max(0, invoice.totalAmount - paidFor(invoice.invoiceNo)), 0);
+    return [school.name, String(schoolStudents.length), String(measured), `${delivered} Pcs`, money(billed), money(due), due > 0 ? 'Payment Due' : billed > 0 ? 'Clear' : 'No Billing'];
+  }).filter(row => Number(row[1]) > 0 || row[4] !== money(0)).slice(0, 6);
+  const recentInvoiceRows = [...periodInvoices].sort((a, b) => b.invoiceDate.localeCompare(a.invoiceDate)).slice(0, 5).map(invoice => {
+    const due = Math.max(0, invoice.totalAmount - paidFor(invoice.invoiceNo));
+    return [invoice.invoiceNo, invoice.invoiceDate, invoice.customer, `${invoice.qty} Pcs`, money(invoice.totalAmount), money(due), due <= 0 ? 'Paid' : paidFor(invoice.invoiceNo) > 0 ? 'Partially Paid' : 'Pending'];
+  });
+
+  return <section className="content dashboard-page business-dashboard">
+    <div className="dashboard-heading"><div><span>BUSINESS OVERVIEW</span><h1>Garment ERP Dashboard</h1><p>Orders, production, stock, delivery and payment position at a glance.</p></div><div className="filterbar salary-filter yearwise-filter"><label>Financial Year<select value={fy} onChange={event => changeFy(event.target.value)}><option>{`${currentFyStart}-${String((currentFyStart + 1) % 100).padStart(2, '0')}`}</option><option>{`${currentFyStart - 1}-${String(currentFyStart % 100).padStart(2, '0')}`}</option></select></label><label>From<input type="date" value={from} onChange={event => setFrom(event.target.value)} /></label><label>To<input type="date" value={to} onChange={event => setTo(event.target.value)} /></label></div></div>
+    <Stats values={[["Active Schools", String(activeSchools), `${schools.length} total schools`], ["Students Measured", String(measuredStudents), `${students.length} student records`], ["Ready Stock", `${readyPieces} Pcs`, "available for delivery"], ["Pending Production", `${Math.max(0, assignedPieces - completedPieces)} Pcs`, `${productionPct}% work completed`]]} />
+    <Stats values={[["Total Invoiced", money(totalInvoiced), `${periodInvoices.length} invoices`], ["Cash Collected", money(totalCollected), `${periodPayments.length || periodCollections.length} receipts`], ["Outstanding Due", money(outstanding), `${pendingInvoices.length} pending invoices`], ["Expenses", money(expenseTotal), `${periodExpenses.length} expense entries`]]} />
+    <div className="dashboard-summary-grid">
+      <article className="card dashboard-flow-card"><div className="cardhead"><div><h2>Order fulfilment</h2><p>Current operational position</p></div></div><div className="dashboard-flow"><div><span className="flow-icon blue"><Users /></span><strong>{students.length}</strong><small>Students</small></div><div><span className="flow-icon purple"><Shirt /></span><strong>{measuredStudents}</strong><small>Measured</small></div><div><span className="flow-icon amber"><Clock3 /></span><strong>{activeAssignments.length}</strong><small>Active jobs</small></div><div><span className="flow-icon green"><PackageCheck /></span><strong>{readyPieces}</strong><small>Ready stock</small></div><div><span className="flow-icon blue"><Truck /></span><strong>{deliveredPieces}</strong><small>Delivered</small></div></div></article>
+      <article className="card dashboard-alert-card"><div className="cardhead"><div><h2>Attention required</h2><p>Items needing follow-up</p></div></div><div className="activityrow"><div className="dot amber"><ReceiptText /></div><div><strong>{pendingInvoices.length} invoices</strong><span>Payment collection pending</span></div><b className="warn">{money(outstanding)}</b></div><div className="activityrow"><div className="dot blue"><Boxes /></div><div><strong>{Math.max(0, assignedPieces - completedPieces)} pieces</strong><span>Production work pending</span></div><b>{productionPct}% done</b></div><div className="activityrow"><div className="dot green"><CheckCircle2 /></div><div><strong>{readyPieces} pieces</strong><span>Ready stock available</span></div><b>{deliveredPieces} delivered</b></div><div className="activityrow"><div className="dot amber"><IndianRupee /></div><div><strong>{money(expenseTotal)}</strong><span>Expenses in selected period</span></div><b>{periodExpenses.length} entries</b></div></article>
     </div>
-    <Table title="Priority work" copy="Active cuttings needing attention" headers={['ASSIGNMENT','CUTTING','CUSTOMER','ASSIGNED TO','WORKS','DONE / QTY','STATUS']} rows={jobs}/>
-  </section>
+    <Table title="School-wise status" copy="Students, deliveries, billing and outstanding amount" headers={['SCHOOL', 'STUDENTS', 'MEASURED', 'DELIVERED', 'INVOICED', 'DUE', 'STATUS']} rows={schoolRows} />
+    <Table title="Recent invoices" copy="Latest billing and payment status" headers={['INVOICE', 'DATE', 'SCHOOL / CUSTOMER', 'QTY', 'TOTAL', 'BALANCE', 'STATUS']} rows={recentInvoiceRows} />
+  </section>;
 }
-function nameOf(employees:Employee[],id:string){return employees.find(e=>e.id===id)?.name||'-'}
-function customerName(customers:string[][],id:string){return customers.find(c=>c[0]===id)?.[1]||'-'}

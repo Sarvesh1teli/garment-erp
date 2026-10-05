@@ -13,14 +13,14 @@ import { Measurements } from './modules/measurements/MeasurementsPage';
 import { BillingPaymentsPage } from './modules/billing/BillingPaymentsPage';
 import { WagePage } from './modules/wages/WagePage';
 import { AttendancePage } from './modules/attendance/AttendancePage';
-import { SchoolNetworkPage } from './modules/network/SchoolNetworkPage';
+import { SchoolOrdersPage } from './modules/network/SchoolOrdersPage';
 import { GatewaySettingsPage } from './modules/settings/GatewaySettingsPage';
 import { defaultAdvances, defaultAssignments, defaultAttendance, defaultCompanySettings, defaultCustomers, defaultGarmentPrices, defaultModuleSettings, defaultSalaryHistory, defaultSchools, defaultStudents, defaultWorkEntries, defaultWorkTypes, employees } from './shared/defaults';
 import type { AdvanceEntry, Assignment, AttendanceEntry, Employee, GarmentPrice, SalaryPayment, School, Student, WorkEntry, WorkType } from './shared/types';
 import { Placeholder } from './shared/ui';
 import { useStoredState } from './shared/utils';
 
-const nav = [['Dashboard',LayoutDashboard],['School Network',Network],['SMS Gateway',MessageSquare],['Customers & Schools',Users],['Measurements',ClipboardList],['Production',Scissors],['Staff Management',UserCog],['Work Assignment',ListChecks],['Work Calculation / Salary',Calculator],['Attendance',CalendarCheck],['Inventory',Boxes],['Billing & Payments',ReceiptText],['Expenses',WalletCards],['Delivery',Truck],['Reports',BarChart3],['Settings',Settings]] as const;
+const nav = [['Dashboard',LayoutDashboard],['School Orders',Network],['SMS Gateway',MessageSquare],['Customers & Schools',Users],['Measurements',ClipboardList],['Production',Scissors],['Staff Management',UserCog],['Work Assignment',ListChecks],['Work Calculation / Salary',Calculator],['Attendance',CalendarCheck],['Inventory',Boxes],['Billing & Payments',ReceiptText],['Expenses',WalletCards],['Delivery',Truck],['Reports',BarChart3],['Settings',Settings]] as const;
 const moduleLabels=nav.map(([label])=>label);
 
 type AppProps = {
@@ -110,7 +110,6 @@ export function App({ currentUser, onLogout }: AppProps) {
             >
               <Icon size={18} />
               <span>{label}</span>
-              {label === 'Production' && <b>12</b>}
             </button>
           ))}
         </nav>
@@ -135,8 +134,8 @@ export function App({ currentUser, onLogout }: AppProps) {
       </aside>
 
       <main>
-        {page === 'Dashboard' ? <DashboardPage employees={employeeRecords} workTypes={workTypes} advances={advances} workEntries={workEntries} assignments={assignments} customers={customers} /> :
-          page === 'School Network' ? <SchoolNetworkPage company={companySettings} /> :
+        {page === 'Dashboard' ? <DashboardPage assignments={assignments} schools={schools} students={students} /> :
+          page === 'School Orders' ? <SchoolOrdersPage /> :
           page === 'SMS Gateway' ? <GatewaySettingsPage company={companySettings} /> :
           page === 'Customers & Schools' ? <CustomersSchools key={`customers-${customerResetKey}`} company={companySettings} customers={customers} setCustomers={setCustomers} schools={schools} setSchools={setSchools} students={students} garmentPrices={garmentPrices} onNavigate={handleNavigate} navParams={navParams} /> :
           page === 'Measurements' ? <Measurements company={companySettings} schools={schools} students={students} setStudents={setStudents} /> :

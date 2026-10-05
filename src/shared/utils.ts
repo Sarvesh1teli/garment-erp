@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { WorkType } from './types';
+import type { InvoiceItem, StockSale, WorkType } from './types';
 
 export const money=(value:number)=>`Rs. ${value.toLocaleString('en-IN')}`;
 export function getApiBaseUrl(): string {
@@ -216,3 +216,74 @@ export const savePdf=async()=>{
     setTimeout(cleanupPrintClasses,500);
   }
 };
+
+export function consolidateStockSales(sales: StockSale[]): StockSale[] {
+  const result: StockSale[] = [];
+  const invoiceGroups = new Map<string, StockSale[]>();
+
+  sales.forEach(sale => {
+    const inv = sale.invoiceNo?.trim();
+    if (inv && inv !== '-') {
+      const group = invoiceGroups.get(inv) || [];
+      group.push(sale);
+      invoiceGroups.set(inv, group);
+    } else {
+      result.push(sale);
+    }
+  });
+
+  invoiceGroups.forEach((group, invNo) => {
+    if (group.length === 1) {
+      result.push(group[0]);
+    } else {
+      const first = group[0];
+      const allItems: InvoiceItem[] = [];
+      let totalCount = 0;
+      let totalAmount = 0;
+
+      group.forEach(s => {
+        if (s.items && s.items.length > 0) {
+          s.items.forEach(it => {
+            allItems.push(it);
+            totalCount += it.qty;
+            totalAmount += it.amount;
+          });
+        } else {
+          allItems.push({
+            gender: s.gender,
+            garment: s.garment,
+            size: s.size,
+            qty: s.count,
+            rate: s.rate,
+            amount: s.total
+          });
+          totalCount += s.count;
+          totalAmount += s.total;
+        }
+      });
+
+      const uniqueGarments = Array.from(new Set(allItems.map(it => it.garment)));
+      const uniqueSizes = Array.from(new Set(allItems.map(it => it.size)));
+      const uniqueGenders = Array.from(new Set(allItems.map(it => it.gender).filter(Boolean)));
+
+      const consolidated: StockSale = {
+        id: first.id,
+        date: first.date,
+        type: first.type,
+        party: first.party,
+        gender: uniqueGenders.length === 1 ? uniqueGenders[0] : (uniqueGenders.length > 1 ? 'Mixed' : first.gender),
+        garment: uniqueGarments.join(', '),
+        size: uniqueSizes.join(', '),
+        count: totalCount,
+        rate: totalCount > 0 ? Math.round(totalAmount / totalCount) : 0,
+        total: totalAmount,
+        invoiceNo: invNo,
+        remarks: first.remarks,
+        items: allItems
+      };
+      result.push(consolidated);
+    }
+  });
+
+  return result.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+}

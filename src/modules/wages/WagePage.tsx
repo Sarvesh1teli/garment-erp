@@ -167,7 +167,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
   },[workTypes,safeWorkTypePage,workTypePageSize]);
   useEffect(()=>{setWorkReportPage(1);setSummaryPage(1);setBreakdownPage(1)},[employeeId,from,to]);
   useEffect(()=>{setMenuPos(null);setViewEntry(null);setEditEntry(null);setEditForm(null);setDeleteEntry(null)},[employeeId,from,to]);
-  useEffect(()=>{const close=()=>setMenuPos(null);window.addEventListener('click',close);window.addEventListener('pointerdown',close);return()=>{window.removeEventListener('click',close);window.removeEventListener('pointerdown',close);}},[]);
+  useEffect(()=>{const close=()=>setMenuPos(null);window.addEventListener('click',close);return()=>window.removeEventListener('click',close)},[]);
   useEffect(()=>{setWorkReportPage(page=>Math.min(page,workReportPageCount));setSummaryPage(page=>Math.min(page,summaryPageCount));setBreakdownPage(page=>Math.min(page,breakdownPageCount));setWorkTypePage(p=>Math.min(Math.max(1,p),workTypePageCount))},[workReportPageCount,summaryPageCount,breakdownPageCount,workTypePageCount]);
 
   const filteredGarmentPrices = useMemo(() => {
@@ -263,7 +263,164 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
   };
   
   const salaryDoc=slipDoc({id:'CURRENT',paidDate:new Date().toISOString().slice(0,10),employeeId,from,to,recover:safeRecover,mode,remarks:'',gross:totalWork,openingAdvance,advanceDuring,pendingAdvance,netPayable,closingAdvance,pieces:totalProduction,workedDays:workedDaysCount,salaryType,leaveDays,leaveDeductionMode,leaveDeductionAmount},nextSalId);
-  const workBreakdownDoc=<div className="tax-doc salary-doc"><SalaryPrintHeader company={company}/><h1>SALARY WORK BREAKDOWN</h1><div className="doc-meta salary-meta"><div><b>Employee</b><span>{employee.name}</span></div><div><b>Period</b><span>{from} to {to}</span></div><div><b>Salary Structure</b><span>{salaryType}</span></div><div><b>Worked Days</b><span>{workedDaysCount} Days</span></div><div><b>Total Entries</b><span>{workRows.length}</span></div></div><div className="doc-parties"><div><h3>EMPLOYEE</h3><p><strong>{employee.name}</strong></p><p>Employee ID: {employee.id}</p><p>Category: {employee.type}</p><p>Mobile: {employee.mobile}</p></div><div><h3>SUMMARY</h3><p>Total work amount: <strong>{money(totalWork)}</strong></p><p>Total pieces: <strong>{totalProduction}</strong></p></div></div><div className="salary-breakup"><table className="doc-table"><thead><tr><th>DATE</th><th>WORK TYPE</th><th>QTY</th>{breakdownShowRate&&<th>RATE</th>}<th>AMOUNT</th></tr></thead><tbody>{workRows.map(w=><tr key={w.id}><td>{w.date}</td><td><strong>{workTypeCode(w.workType)} - {w.workType.name}</strong></td><td>{w.quantity}</td>{breakdownShowRate&&<td>{money(w.workType.rate)}</td>}<td><strong>{money(w.amount)}</strong></td></tr>)}{!workRows.length&&<tr><td colSpan={breakdownShowRate?5:4} style={{textAlign:'center'}}>No work entries found for this employee and period.</td></tr>}</tbody></table></div><div className="doc-totals salary-total"><div><p>Total work amount<strong>{money(totalWork)}</strong></p></div></div><div className="doc-footer salary-footer"><div><h3>Authorised Signatory</h3><span>Garment Production ERP</span></div></div><div className="doc-top-note">Daily work breakdown for salary calculation.</div><SalaryPrintFooter/></div>;
+  // Build daily production breakdown: for each attendance-present day, sum workRows for that day + per-work-type breakdown
+  const dailyProductionBreakdown = useMemo(() => {
+    // Get all unique dates from attendance (Present or Half Day) sorted
+    const attendanceDays = periodAttendance
+      .filter(a => a.status === 'Present' || a.status === 'Half Day')
+      .map(a => a.date)
+      .sort();
+    // If no attendance entries, fall back to unique dates from work entries
+    const workDates = [...new Set(workRows.map(w => w.date))].sort();
+    const days = attendanceDays.length > 0 ? attendanceDays : workDates;
+    return days.map(date => {
+      const dayRows = workRows.filter(w => w.date === date);
+      const dayQty = dayRows.reduce((a, b) => a + b.quantity, 0);
+      const dayAmount = dayRows.reduce((a, b) => a + b.amount, 0);
+      // Format DD-MM-YYYY
+      const parts = date.split('-');
+      const displayDate = parts.length === 3 ? `${parts[2]}-${parts[1]}-${parts[0]}` : date;
+      // Per-work-type breakdown labels: "103-20 pcs, 101-60 pcs"
+      const typeBreakdown = dayRows.map(w => `${workTypeCode(w.workType)}-${w.quantity} pcs`);
+      return { date, displayDate, qty: dayQty, amount: dayAmount, typeBreakdown };
+    }).filter(day => day.qty > 0);
+  }, [periodAttendance, workRows]);
+
+  const workBreakdownDoc = (
+    <div className="tax-doc salary-doc">
+      <SalaryPrintHeader company={company}/>
+      <h1 style={{textAlign:'center',fontSize:'1.1em',fontWeight:800,letterSpacing:1,margin:'8px 0 12px',textTransform:'uppercase'}}>WORK BREAKDOWN &amp; SALARY SLIP</h1>
+
+      {/* Header meta row: Slip No | Pay Period | Worked Days | Total Pieces */}
+      <table style={{width:'100%',borderCollapse:'collapse',marginBottom:10,border:'1.5px solid #222'}}>
+        <tbody>
+          <tr>
+            <td style={{border:'1px solid #bbb',padding:'7px 12px',width:'20%'}}>
+              <div style={{fontSize:11,color:'#555',fontWeight:600}}>Slip No</div>
+              <div style={{fontWeight:700,fontSize:13}}>{nextSalId}</div>
+            </td>
+            <td style={{border:'1px solid #bbb',padding:'7px 12px',width:'35%'}}>
+              <div style={{fontSize:11,color:'#555',fontWeight:600}}>Pay Period</div>
+              <div style={{fontWeight:700,fontSize:13}}>{(() => {
+                const fmt = (d: string) => { const p = d.split('-'); return p.length===3?`${p[2]}-${p[1]}-${p[0]}`:d; };
+                return `${fmt(from)} to ${fmt(to)}`;
+              })()}</div>
+            </td>
+            <td style={{border:'1px solid #bbb',padding:'7px 12px',width:'22%'}}>
+              <div style={{fontSize:11,color:'#555',fontWeight:600}}>Worked Days</div>
+              <div style={{fontWeight:700,fontSize:13}}>{workedDaysCount} Days</div>
+            </td>
+            <td style={{border:'1px solid #bbb',padding:'7px 12px',width:'23%'}}>
+              <div style={{fontSize:11,color:'#555',fontWeight:600}}>Total Pieces</div>
+              <div style={{fontWeight:700,fontSize:13}}>{totalProduction} pcs</div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* Employee Details | Payment Summary */}
+      <table style={{width:'100%',borderCollapse:'collapse',marginBottom:10,border:'1.5px solid #222'}}>
+        <thead>
+          <tr>
+            <th style={{border:'1px solid #bbb',padding:'6px 12px',background:'#dbeafe',textAlign:'left',fontSize:12,fontWeight:700,width:'50%'}}>EMPLOYEE DETAILS</th>
+            <th style={{border:'1px solid #bbb',padding:'6px 12px',background:'#dbeafe',textAlign:'left',fontSize:12,fontWeight:700,width:'50%'}}>PAYMENT SUMMARY</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style={{border:'1px solid #bbb',padding:'10px 12px',verticalAlign:'top',fontSize:13}}>
+              <div style={{fontWeight:700,marginBottom:4}}>{employee.name}</div>
+              <div>Employee ID: {employee.id}</div>
+              <div>Category / Role: {employee.type}</div>
+              <div>Mobile: {employee.mobile}</div>
+            </td>
+            <td style={{border:'1px solid #bbb',padding:'10px 12px',verticalAlign:'top',fontSize:13}}>
+              <div>Gross work earnings: <strong style={{color:'#1e3a8a'}}>{money(totalWork)}</strong></div>
+              <div>Advance recovered: <strong>{money(safeRecover)}</strong></div>
+              <div>Net payable: <strong style={{color:'#15803d',fontSize:14}}>{money(netPayable)}</strong></div>
+              <div>Closing advance balance: <strong>{money(closingAdvance)}</strong></div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* Work Operations Summary Table - grouped by work type */}
+      <table style={{width:'100%',borderCollapse:'collapse',marginBottom:0,border:'1.5px solid #222'}}>
+        <thead>
+          <tr>
+            <th style={{border:'1px solid #bbb',padding:'7px 10px',background:'#dbeafe',textAlign:'center',width:'8%',fontSize:12}}>SL</th>
+            <th style={{border:'1px solid #bbb',padding:'7px 12px',background:'#dbeafe',textAlign:'left',fontSize:12}}>WORK OPERATION / STITCH TYPE</th>
+            <th style={{border:'1px solid #bbb',padding:'7px 12px',background:'#dbeafe',textAlign:'center',width:'18%',fontSize:12}}>QTY (PCS)</th>
+            <th style={{border:'1px solid #bbb',padding:'7px 12px',background:'#dbeafe',textAlign:'right',width:'18%',fontSize:12}}>AMOUNT</th>
+          </tr>
+        </thead>
+        <tbody>
+          {summary.map((row, i) => (
+            <tr key={i}>
+              <td style={{border:'1px solid #e2e8f0',padding:'7px 10px',textAlign:'center',fontSize:13}}>{i + 1}</td>
+              <td style={{border:'1px solid #e2e8f0',padding:'7px 12px',fontWeight:600,fontSize:13}}>{row.name}</td>
+              <td style={{border:'1px solid #e2e8f0',padding:'7px 12px',textAlign:'center',fontSize:13}}>{row.qty} pcs</td>
+              <td style={{border:'1px solid #e2e8f0',padding:'7px 12px',textAlign:'right',fontSize:13}}>Rs. {row.amount}</td>
+            </tr>
+          ))}
+          {!summary.length && (
+            <tr><td colSpan={4} style={{border:'1px solid #e2e8f0',padding:'12px',textAlign:'center',color:'#64748b'}}>No work entries found for this period.</td></tr>
+          )}
+          <tr style={{background:'#f0fdf4'}}>
+            <td colSpan={2} style={{border:'1px solid #bbb',padding:'8px 12px',textAlign:'right',fontWeight:700,fontSize:13}}>Total Work Operations:</td>
+            <td style={{border:'1px solid #bbb',padding:'8px 12px',textAlign:'center',fontWeight:700,fontSize:13}}>{totalProduction} pcs</td>
+            <td style={{border:'1px solid #bbb',padding:'8px 12px',textAlign:'right',fontWeight:700,fontSize:13,color:'#15803d'}}>Rs. {totalWork}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* DAILY WORK ACTIVITY */}
+      {dailyProductionBreakdown.length > 0 && (
+        <div style={{border:'1.5px solid #222',borderTop:'none',padding:'10px 12px 12px'}}>
+          <div style={{fontWeight:700,fontSize:12,marginBottom:10}}>
+            📅 Daily Work Activity ({workedDaysCount} Days Worked):
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4, 1fr)',gap:6}}>
+            {dailyProductionBreakdown.map(day => (
+              <div key={day.date} style={{border:'1px solid #e2e8f0',borderRadius:6,padding:'6px 8px',background:'#fafafa'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:2,gap:4}}>
+                  <span style={{fontWeight:700,fontSize:11}}>{day.displayDate}: {day.qty} pcs</span>
+                  <span style={{color:'#15803d',fontWeight:700,fontSize:11,whiteSpace:'nowrap'}}>Rs. {day.amount}</span>
+                </div>
+                {day.typeBreakdown.length > 0 && (
+                  <div style={{fontSize:10,color:'#475569',marginTop:1}}>
+                    [{day.typeBreakdown.join(', ')}]
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Footer totals */}
+      <table style={{width:'100%',borderCollapse:'collapse',marginTop:10,border:'1.5px solid #222'}}>
+        <tbody>
+          <tr>
+            <td style={{border:'1px solid #bbb',padding:'10px 16px',width:'50%'}}>
+              <div style={{fontSize:12,color:'#555'}}>Total gross work amount</div>
+              <div style={{fontWeight:800,fontSize:16,marginTop:4}}>Rs. {totalWork}</div>
+            </td>
+            <td style={{border:'1px solid #bbb',padding:'10px 16px',width:'50%'}}>
+              <div style={{fontSize:12,color:'#555'}}>Net salary payable</div>
+              <div style={{fontWeight:800,fontSize:16,marginTop:4,color:'#15803d'}}>Rs. {netPayable}</div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div className="doc-footer salary-footer" style={{marginTop:10}}>
+        <div><h3>Authorised Signatory</h3><span>Garment Production ERP</span></div>
+        <div><h3>Employee Signature</h3></div>
+      </div>
+      <SalaryPrintFooter/>
+    </div>
+  );
   const filteredSalaryHistory = useMemo(() => {
     return salaryHistory.filter(s => (!employeeId || s.employeeId === employeeId) && typeof s.gross === 'number');
   }, [salaryHistory, employeeId]);
@@ -321,7 +478,57 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
   const editWorkType=editForm?workTypes.find(wt=>wt.id===editForm.workTypeId)||editEntry?.workType:null;
   const editAmount=editForm&&editWorkType?Number(editForm.quantity||0)*editWorkType.rate:0;
   return <section className="content wage-workspace">
-    <div className="measurement-tabs wage-tabs"><button className={wageTab==='work'?'active':''} onClick={()=>setWageTab('work')}><ClipboardList size={16}/><span>Work Entry<small>daily work + summary</small></span></button><button className={wageTab==='advance'?'active':''} onClick={()=>setWageTab('advance')}><WalletCards size={16}/><span>Advance<small>payment + history</small></span></button><button className={wageTab==='salary'?'active':''} onClick={()=>setWageTab('salary')}><Calculator size={16}/><span>Salary<small>payment slip</small></span></button><button className={wageTab==='history'?'active':''} onClick={()=>setWageTab('history')}><ReceiptText size={16}/><span>Salary History<small>{salaryHistory.length} slips</small></span></button><button className={wageTab==='masters'?'active':''} onClick={()=>setWageTab('masters')}><Settings size={16}/><span>Masters<small>work type rates</small></span></button><button className={wageTab==='reports'?'active':''} onClick={()=>setWageTab('reports')}><BarChart3 size={16}/><span>Reports<small>production + ledger</small></span></button></div>
+    <div className="segmented-pill-tabs wage-main-tabs">
+      <button
+        type="button"
+        className={`pill-tab-btn ${wageTab==='work'?'active':''}`}
+        onClick={()=>setWageTab('work')}
+      >
+        <ClipboardList size={16}/>
+        <span>WORK ENTRY</span>
+      </button>
+      <button
+        type="button"
+        className={`pill-tab-btn ${wageTab==='advance'?'active':''}`}
+        onClick={()=>setWageTab('advance')}
+      >
+        <WalletCards size={16}/>
+        <span>ADVANCE</span>
+      </button>
+      <button
+        type="button"
+        className={`pill-tab-btn ${wageTab==='salary'?'active':''}`}
+        onClick={()=>setWageTab('salary')}
+      >
+        <Calculator size={16}/>
+        <span>SALARY</span>
+      </button>
+      <button
+        type="button"
+        className={`pill-tab-btn ${wageTab==='history'?'active':''}`}
+        onClick={()=>setWageTab('history')}
+      >
+        <ReceiptText size={16}/>
+        <span>SALARY HISTORY</span>
+        {salaryHistory.length > 0 && <span className="tab-pill-badge">{salaryHistory.length}</span>}
+      </button>
+      <button
+        type="button"
+        className={`pill-tab-btn ${wageTab==='masters'?'active':''}`}
+        onClick={()=>setWageTab('masters')}
+      >
+        <Settings size={16}/>
+        <span>MASTERS</span>
+      </button>
+      <button
+        type="button"
+        className={`pill-tab-btn ${wageTab==='reports'?'active':''}`}
+        onClick={()=>setWageTab('reports')}
+      >
+        <BarChart3 size={16}/>
+        <span>REPORTS</span>
+      </button>
+    </div>
     {wageTab!=='masters'&&<div className="filterbar salary-filter compact-wage-filter"><label>Employee<select value={employeeId} onChange={e=>{const id=e.target.value;setEmployeeId(id);setWorkForm(f=>({...f,employeeId:id}));}}><option value="">All Staff / Select employee</option>{activeStaff.map(e=><option value={e.id} key={e.id}>{e.name}</option>)}</select></label><label>From<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label><label>To<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label>{wageTab==="salary"&&<>{salaryType==='Fixed Monthly'&&<><label>Leave / Absent Days<input type="number" min="0" style={{width:'90px'}} value={leaveDays} onChange={e=>setLeaveDays(Number(e.target.value))}/></label><label>Leave Deduction Option<select value={leaveDeductionMode} onChange={e=>setLeaveDeductionMode(e.target.value as LeaveDeductionMode)}><option value="None">No Deduction (Full Pay)</option><option value="Auto">Automatic (Sal / 30 per day)</option><option value="Manual">Manual Deduction Entry</option></select></label>{leaveDeductionMode==='Manual'&&<label>Deduct Amount (Rs.)<input type="number" min="0" style={{width:'110px'}} value={manualDeduction} onChange={e=>setManualDeduction(Number(e.target.value))}/></label>}</>}<label>Recover this month<input type="number" min="0" value={recover} onChange={e=>setRecover(Number(e.target.value))}/></label><label>Payment mode<select value={mode} onChange={e=>setMode(e.target.value as "Cash"|"UPI"|"Bank")}><option>Cash</option><option>UPI</option><option>Bank</option></select></label><div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}><button type="button" className="primary" style={{ margin: 0, whiteSpace: 'nowrap' }} onClick={()=>setShowWorkBreakdown(v=>!v)}><Calculator size={16}/> Calculate salary</button><button type="button" className={showSalaryPayment ? "primary" : "outline"} style={{ margin: 0, whiteSpace: 'nowrap' }} onClick={()=>setShowSalaryPayment(v=>!v)} title="Open / Hide Salary payment screen"><ReceiptText size={16}/> Salary payment screen</button></div></>}</div>}
     {wageTab==='work'&&<><div className="advance-grid">
       <article className="card salary-panel"><div className="cardhead"><div><h2>Daily work entry</h2><p>Enter one completed work type at a time for each staff member.</p></div><ClipboardList size={18}/></div><div className="advance-form"><label>Date<input type="date" value={workForm.date} onChange={e=>setWorkForm({...workForm,date:e.target.value})}/></label><label>Employee<select value={workForm.employeeId} onChange={e=>{const id=e.target.value;setWorkForm({...workForm,employeeId:id});setEmployeeId(id);}}><option value="">Select employee</option>{activeStaff.map(e=><option value={e.id} key={e.id}>{e.name}</option>)}</select></label><label>Work code<select value={workForm.workTypeId} onChange={e=>setWorkForm({...workForm,workTypeId:e.target.value})}><option value="">Select work type</option>{activeWorkTypes.map(w=><option value={w.id} key={w.id}>{workTypeCode(w)}</option>)}</select></label><label>Work type<select value={workForm.workTypeId} onChange={e=>setWorkForm({...workForm,workTypeId:e.target.value})}><option value="">Select work type</option>{activeWorkTypes.map(w=><option value={w.id} key={w.id}>{workTypeCode(w)} - {w.name} - {money(w.rate)} / {w.unit}</option>)}</select></label><label>Quantity<input type="number" min="0" value={workForm.quantity} onChange={e=>setWorkForm({...workForm,quantity:Number(e.target.value)})}/></label><label className="wide">Remarks<input value={workForm.remarks} onChange={e=>setWorkForm({...workForm,remarks:e.target.value})} placeholder="Batch, order, or notes"/></label><button className="primary" onClick={addWorkEntry}><Plus size={16}/> Add work</button></div></article>
@@ -363,30 +570,33 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
       )}</>}
     {wageTab==='history'&&<>{salaryDeleted&&<div className="salary-success"><CheckCircle2 size={16}/> Salary slip {salaryDeleted} deleted from Salary History.</div>}<Stats values={[[ 'Payments',String(salaryHistoryRows.length),employeeId ? 'for selected employee' : 'all employees'],[ 'Total Gross',money(filteredSalaryHistory.reduce((a,b)=>a+(b.gross||0),0)),'total work amount'],[ 'Total Net Paid',money(filteredSalaryHistory.reduce((a,b)=>a+(b.netPayable||0),0)),'after recovery'],[ 'Last Paid',filteredSalaryHistory[0]?.paidDate||'-','most recent' ]]}/><Table paged={true} title="Salary history" copy="Each payment snapshots its slip values and can be reprinted" headers={['SAL ID','EMPLOYEE','PAID DATE','PERIOD','SALARY TYPE','WORK DAYS','PIECES','GROSS','RECOVERED','NET PAYABLE','MODE']} rows={salaryHistoryRows} actions={r=>{const pay=salaryHistory.find(x=>x.id===r[0]);return pay?<div className="dropdown-action-cell"><button type="button" className="outline mini-action dropdown-trigger" onClick={e=>{e.stopPropagation();const rect=(e.currentTarget as HTMLElement).getBoundingClientRect();const pos={top:rect.bottom+4,left:Math.max(8,rect.right-160)};setHistoryDropdownPos(openHistoryAction===pay.id?null:pos);setOpenHistoryAction(openHistoryAction===pay.id?null:pay.id)}}>Actions <span className="dropdown-arrow"/></button>{openHistoryAction===pay.id&&historyDropdownPos&&<div className="dropdown-menu" style={{top:historyDropdownPos.top,left:historyDropdownPos.left}}><button type="button" className="dropdown-item" onClick={()=>{setOpenHistoryAction(null);setHistoryDropdownPos(null);setViewHistory(pay)}}><Printer size={14}/> Print Slip</button><button type="button" className="dropdown-item danger" onClick={()=>{setOpenHistoryAction(null);setHistoryDropdownPos(null);setDeleteTarget(pay);setMasterAuth({username:'',password:''});setMasterError('')}}><Trash2 size={14}/> Delete</button></div>}</div>:null}}/></>}
     {wageTab==='masters'&&<>
-      <div className="measurement-tabs wage-tabs" style={{marginBottom:'16px'}}>
+      <div className="underline-tabs-nav wage-master-subtabs">
         <button
           type="button"
-          className={masterSubTab==='work-type'?'active':''}
+          className={`underline-tab-btn ${masterSubTab==='work-type'?'active':''}`}
           onClick={()=>setMasterSubTab('work-type')}
         >
           <Settings size={16}/>
-          <span>Work Type Master<small>Configure piece rates & units ({workTypes.length})</small></span>
+          <span>Work Type Master</span>
+          <span className="subtab-count">({workTypes.length})</span>
         </button>
         <button
           type="button"
-          className={masterSubTab==='rate-history'?'active':''}
+          className={`underline-tab-btn ${masterSubTab==='rate-history'?'active':''}`}
           onClick={()=>setMasterSubTab('rate-history')}
         >
           <ReceiptText size={16}/>
-          <span>Work Type Rate History<small>Log of rate, unit & status modifications ({workTypeHistory.length})</small></span>
+          <span>Work Type Rate History</span>
+          <span className="subtab-count">({workTypeHistory.length})</span>
         </button>
         <button
           type="button"
-          className={masterSubTab==='garment-price'?'active':''}
+          className={`underline-tab-btn ${masterSubTab==='garment-price'?'active':''}`}
           onClick={()=>setMasterSubTab('garment-price')}
         >
           <Tag size={16}/>
-          <span>Price for Garment<small>Selling rates by quality & size ({garmentPrices.length})</small></span>
+          <span>Price for Garment</span>
+          <span className="subtab-count">({garmentPrices.length})</span>
         </button>
       </div>
 

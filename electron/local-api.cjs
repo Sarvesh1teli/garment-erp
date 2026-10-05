@@ -506,7 +506,44 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS google_drive_config (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL DEFAULT '',
+      client_secret TEXT NOT NULL DEFAULT '',
+      redirect_uri TEXT NOT NULL DEFAULT '',
+      connected INTEGER NOT NULL DEFAULT 0,
+      connected_email TEXT NOT NULL DEFAULT '',
+      refresh_token TEXT NOT NULL DEFAULT '',
+      access_token TEXT NOT NULL DEFAULT '',
+      token_expiry INTEGER NOT NULL DEFAULT 0,
+      folder_id TEXT NOT NULL DEFAULT '',
+      folder_name TEXT NOT NULL DEFAULT 'ThreadFlow Garment Backups',
+      schedule_enabled INTEGER NOT NULL DEFAULT 0,
+      schedule_time TEXT NOT NULL DEFAULT '10:00',
+      local_backup_enabled INTEGER NOT NULL DEFAULT 0,
+      cloud_backup_enabled INTEGER NOT NULL DEFAULT 0,
+      google_drive_backup_enabled INTEGER NOT NULL DEFAULT 1,
+      keep_local_backups INTEGER NOT NULL DEFAULT 3,
+      last_backup_at TEXT,
+      last_backup_status TEXT,
+      last_backup_message TEXT,
+      last_backup_size TEXT,
+      last_local_backup_at TEXT,
+      last_local_backup_size TEXT,
+      last_local_backup_status TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS google_drive_backups (
+      id TEXT PRIMARY KEY,
+      file_name TEXT NOT NULL,
+      drive_file_id TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'SUCCESS',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
+  database.exec("INSERT OR IGNORE INTO google_drive_config (id) VALUES ('default');");
 
   const ensureColumn = (table, column, definition) => {
     const columns = database.prepare(`PRAGMA table_info(${table})`).all();
@@ -926,6 +963,410 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
       try { database.exec('DETACH DATABASE restore_db'); } catch {}
     }
   }
+
+  // ==========================================
+  // GOOGLE DRIVE BACKUP & SCHEDULER SYSTEM
+  // ==========================================
+  function getGoogleDriveRow() {
+    let row = database.prepare("SELECT * FROM google_drive_config WHERE id = 'default'").get();
+    if (!row) {
+      database.prepare("INSERT INTO google_drive_config (id, redirect_uri) VALUES ('default', ?)").run(`http://localhost:${port}/api/settings/google-drive/callback`);
+      row = database.prepare("SELECT * FROM google_drive_config WHERE id = 'default'").get();
+    }
+    return row;
+  }
+
+  function getGoogleDriveStatus() {
+    const row = getGoogleDriveRow();
+    const countRow = database.prepare("SELECT COUNT(*) AS c FROM google_drive_backups").get();
+    return {
+      configured: Boolean(row.client_id && row.client_secret),
+      clientId: row.client_id || '',
+      clientSecretConfigured: Boolean(row.client_secret),
+      redirectUri: row.redirect_uri || `http://localhost:${port}/api/settings/google-drive/callback`,
+      connected: Boolean(row.connected && row.refresh_token),
+      connectedEmail: row.connected_email || '',
+      folderName: row.folder_name || 'ThreadFlow Garment Backups',
+      folderId: row.folder_id || '',
+      scheduleEnabled: Boolean(row.schedule_enabled),
+      scheduleTime: row.schedule_time || '10:00',
+      localBackupEnabled: Boolean(row.local_backup_enabled),
+      cloudBackupEnabled: Boolean(row.cloud_backup_enabled),
+      googleDriveBackupEnabled: Boolean(row.google_drive_backup_enabled !== 0),
+      keepLocalBackups: row.keep_local_backups || 3,
+      lastBackupAt: row.last_backup_at || null,
+      lastBackupStatus: row.last_backup_status || 'SUCCESS',
+      lastBackupMessage: row.last_backup_message || '',
+      lastBackupSize: row.last_backup_size || '',
+      lastLocalBackupAt: row.last_local_backup_at || null,
+      lastLocalBackupSize: row.last_local_backup_size || '',
+      lastLocalBackupStatus: row.last_local_backup_status || 'SUCCESS',
+      backupsCount: countRow?.c || 0
+    };
+  }
+
+  function saveGoogleDriveOAuth({ clientId, clientSecret, redirectUri }) {
+    const current = getGoogleDriveRow();
+    const newClientId = clientId !== undefined ? String(clientId).trim() : current.client_id;
+    const newClientSecret = clientSecret ? String(clientSecret).trim() : current.client_secret;
+    const newRedirectUri = redirectUri !== undefined && String(redirectUri).trim() ? String(redirectUri).trim() : (current.redirect_uri || `http://localhost:${port}/api/settings/google-drive/callback`);
+
+    const credentialsChanged = (newClientId !== current.client_id) || (clientSecret && newClientSecret !== current.client_secret);
+    if (credentialsChanged) {
+      database.prepare(`
+        UPDATE google_drive_config
+        SET client_id = ?, client_secret = ?, redirect_uri = ?, connected = 0, connected_email = '', refresh_token = '', access_token = '', token_expiry = 0, updated_at = CURRENT_TIMESTAMP
+        WHERE id = 'default'
+      `).run(newClientId, newClientSecret, newRedirectUri);
+    } else {
+      database.prepare(`
+        UPDATE google_drive_config
+        SET client_id = ?, client_secret = ?, redirect_uri = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = 'default'
+      `).run(newClientId, newClientSecret, newRedirectUri);
+    }
+    return getGoogleDriveStatus();
+  }
+
+  function getGoogleDriveConnectUrl() {
+    const row = getGoogleDriveRow();
+    if (!row.client_id || !row.client_secret) {
+      throw new Error('Google Client ID and Client Secret must be configured in OAuth Settings first.');
+    }
+    const redirectUri = row.redirect_uri || `http://localhost:${port}/api/settings/google-drive/callback`;
+    const scopes = [
+      'https://www.googleapis.com/auth/drive.file',
+      'https://www.googleapis.com/auth/userinfo.email',
+      'openid'
+    ].join(' ');
+
+    const params = new URLSearchParams({
+      client_id: row.client_id,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: scopes,
+      access_type: 'offline',
+      prompt: 'consent'
+    });
+    return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+  }
+
+  async function handleGoogleDriveOAuthCallback(code) {
+    const row = getGoogleDriveRow();
+    if (!row.client_id || !row.client_secret) {
+      throw new Error('Google OAuth credentials not configured');
+    }
+    const redirectUri = row.redirect_uri || `http://localhost:${port}/api/settings/google-drive/callback`;
+
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: row.client_id,
+        client_secret: row.client_secret,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code'
+      })
+    });
+
+    const tokenData = await tokenRes.json();
+    if (!tokenRes.ok || !tokenData.access_token) {
+      throw new Error(tokenData.error_description || tokenData.error || 'Failed to exchange authorization code for tokens');
+    }
+
+    let userEmail = 'Google Drive Account';
+    if (tokenData.id_token) {
+      try {
+        const payloadBase64 = tokenData.id_token.split('.')[1];
+        const payload = JSON.parse(Buffer.from(payloadBase64, 'base64').toString('utf8'));
+        if (payload.email) userEmail = payload.email;
+      } catch {}
+    }
+
+    if (userEmail === 'Google Drive Account') {
+      try {
+        const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` }
+        });
+        if (userRes.ok) {
+          const userInfo = await userRes.json();
+          if (userInfo.email) userEmail = userInfo.email;
+        }
+      } catch (err) {
+        console.warn('Could not fetch Google user info:', err.message);
+      }
+    }
+
+    const refreshToken = tokenData.refresh_token || row.refresh_token;
+    const expiry = Date.now() + ((tokenData.expires_in || 3600) * 1000);
+
+    database.prepare(`
+      UPDATE google_drive_config
+      SET connected = 1, connected_email = ?, refresh_token = ?, access_token = ?, token_expiry = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = 'default'
+    `).run(userEmail, refreshToken, tokenData.access_token, expiry);
+
+    return { userEmail };
+  }
+
+  async function getValidAccessToken() {
+    const row = getGoogleDriveRow();
+    if (!row.refresh_token) throw new Error('Google Drive account is not connected. Please connect your account.');
+
+    if (row.access_token && row.token_expiry && Date.now() < (Number(row.token_expiry) - 60000)) {
+      return row.access_token;
+    }
+
+    const refreshRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: row.client_id,
+        client_secret: row.client_secret,
+        refresh_token: row.refresh_token,
+        grant_type: 'refresh_token'
+      })
+    });
+
+    const refreshData = await refreshRes.json();
+    if (!refreshRes.ok || !refreshData.access_token) {
+      throw new Error(refreshData.error_description || refreshData.error || 'Failed to refresh Google Drive access token. Please reconnect your account.');
+    }
+
+    const expiry = Date.now() + ((refreshData.expires_in || 3600) * 1000);
+    database.prepare(`
+      UPDATE google_drive_config
+      SET access_token = ?, token_expiry = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = 'default'
+    `).run(refreshData.access_token, expiry);
+
+    return refreshData.access_token;
+  }
+
+  async function getOrCreateGoogleDriveFolder(accessToken) {
+    const folderName = 'ThreadFlow Garment Backups';
+    const query = `mimeType = 'application/vnd.google-apps.folder' and name = '${folderName}' and trashed = false`;
+    const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)`, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+
+    if (searchRes.ok) {
+      const data = await searchRes.json();
+      if (data.files && data.files.length > 0) {
+        return data.files[0].id;
+      }
+    }
+
+    const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: folderName,
+        mimeType: 'application/vnd.google-apps.folder'
+      })
+    });
+
+    const folderData = await createRes.json();
+    if (!createRes.ok || !folderData.id) {
+      throw new Error('Failed to create backup folder on Google Drive');
+    }
+    return folderData.id;
+  }
+
+  async function runGoogleDriveBackup() {
+    const accessToken = await getValidAccessToken();
+    const folderId = await getOrCreateGoogleDriveFolder(accessToken);
+
+    const manifest = createBackup();
+    const dir = safeBackupDirectory(manifest.id);
+    const zipBuffer = createZipBuffer(dir);
+    const sizeBytes = zipBuffer.length;
+    const sizeStr = (sizeBytes / (1024 * 1024)).toFixed(1) + ' MB';
+
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10);
+    const timeStr = now.toTimeString().slice(0, 5).replace(':', '');
+    const fileName = `garment-automatic-backup-${dateStr}-${timeStr}.zip`;
+
+    const boundary = '-------ThreadFlowBackupBoundary' + crypto.randomBytes(8).toString('hex');
+    const metadata = JSON.stringify({
+      name: fileName,
+      parents: [folderId],
+      description: `ThreadFlow Garment ERP backup created at ${now.toISOString()}`
+    });
+
+    const header = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n--${boundary}\r\nContent-Type: application/zip\r\n\r\n`;
+    const footer = `\r\n--${boundary}--`;
+
+    const multipartBuffer = Buffer.concat([
+      Buffer.from(header, 'utf8'),
+      zipBuffer,
+      Buffer.from(footer, 'utf8')
+    ]);
+
+    const uploadRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`,
+        'Content-Length': String(multipartBuffer.length)
+      },
+      body: multipartBuffer
+    });
+
+    const uploadData = await uploadRes.json();
+    if (!uploadRes.ok || !uploadData.id) {
+      const err = uploadData.error?.message || 'Google Drive file upload failed';
+      database.prepare(`
+        UPDATE google_drive_config
+        SET last_backup_at = CURRENT_TIMESTAMP, last_backup_status = 'FAILED', last_backup_message = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = 'default'
+      `).run(err);
+      throw new Error(err);
+    }
+
+    const backupId = `gdrive-${Date.now()}`;
+    database.prepare(`
+      INSERT INTO google_drive_backups (id, file_name, drive_file_id, size_bytes, status, created_at)
+      VALUES (?, ?, ?, ?, 'SUCCESS', CURRENT_TIMESTAMP)
+    `).run(backupId, fileName, uploadData.id, sizeBytes);
+
+    database.prepare(`
+      UPDATE google_drive_config
+      SET last_backup_at = CURRENT_TIMESTAMP, last_backup_status = 'SUCCESS', last_backup_message = 'Google Drive backup uploaded', last_backup_size = ?, folder_id = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = 'default'
+    `).run(sizeStr, folderId);
+
+    return {
+      id: backupId,
+      fileName,
+      sizeBytes,
+      sizeStr,
+      driveFileId: uploadData.id,
+      status: 'SUCCESS',
+      createdAt: now.toISOString()
+    };
+  }
+
+  function listGoogleDriveBackupFiles() {
+    return database.prepare("SELECT * FROM google_drive_backups ORDER BY created_at DESC").all().map(r => ({
+      id: r.id,
+      fileName: r.file_name,
+      driveFileId: r.drive_file_id,
+      sizeBytes: r.size_bytes,
+      sizeStr: (r.size_bytes / (1024 * 1024)).toFixed(1) + ' MB',
+      status: r.status,
+      createdAt: r.created_at
+    }));
+  }
+
+  async function getGoogleDriveBackupStream(backupId) {
+    const row = database.prepare("SELECT * FROM google_drive_backups WHERE id = ?").get(backupId);
+    if (!row) throw new Error('Backup record not found');
+    const accessToken = await getValidAccessToken();
+
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${row.drive_file_id}?alt=media`, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    if (!res.ok) throw new Error('Unable to download backup from Google Drive');
+    const arrayBuffer = await res.arrayBuffer();
+    return {
+      fileName: row.file_name,
+      buffer: Buffer.from(arrayBuffer)
+    };
+  }
+
+  async function restoreGoogleDriveBackup(backupId) {
+    const { buffer } = await getGoogleDriveBackupStream(backupId);
+    return importBackup(buffer);
+  }
+
+  function disconnectGoogleDrive() {
+    database.prepare(`
+      UPDATE google_drive_config
+      SET connected = 0, connected_email = '', refresh_token = '', access_token = '', token_expiry = 0, updated_at = CURRENT_TIMESTAMP
+      WHERE id = 'default'
+    `).run();
+    return getGoogleDriveStatus();
+  }
+
+  function saveGoogleDriveSchedule(data) {
+    const current = getGoogleDriveRow();
+    const scheduleEnabled = data.scheduleEnabled !== undefined ? (data.scheduleEnabled ? 1 : 0) : current.schedule_enabled;
+    const scheduleTime = data.scheduleTime !== undefined ? String(data.scheduleTime) : current.schedule_time;
+    const localBackupEnabled = data.localBackupEnabled !== undefined ? (data.localBackupEnabled ? 1 : 0) : current.local_backup_enabled;
+    const cloudBackupEnabled = data.cloudBackupEnabled !== undefined ? (data.cloudBackupEnabled ? 1 : 0) : current.cloud_backup_enabled;
+    const googleDriveBackupEnabled = data.googleDriveBackupEnabled !== undefined ? (data.googleDriveBackupEnabled ? 1 : 0) : current.google_drive_backup_enabled;
+    const keepLocalBackups = data.keepLocalBackups !== undefined ? Number(data.keepLocalBackups) : current.keep_local_backups;
+
+    database.prepare(`
+      UPDATE google_drive_config
+      SET schedule_enabled = ?, schedule_time = ?, local_backup_enabled = ?, cloud_backup_enabled = ?, google_drive_backup_enabled = ?, keep_local_backups = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = 'default'
+    `).run(scheduleEnabled, scheduleTime, localBackupEnabled, cloudBackupEnabled, googleDriveBackupEnabled, keepLocalBackups);
+
+    return getGoogleDriveStatus();
+  }
+
+  function runLocalBackup() {
+    const row = getGoogleDriveRow();
+    const manifest = createBackup();
+    const dir = safeBackupDirectory(manifest.id);
+    const zipBuffer = createZipBuffer(dir);
+    const sizeStr = (zipBuffer.length / (1024 * 1024)).toFixed(1) + ' MB';
+    pruneBackups(row.keep_local_backups || 3);
+
+    database.prepare(`
+      UPDATE google_drive_config
+      SET last_local_backup_at = CURRENT_TIMESTAMP, last_local_backup_size = ?, last_local_backup_status = 'SUCCESS', updated_at = CURRENT_TIMESTAMP
+      WHERE id = 'default'
+    `).run(sizeStr);
+
+    return { manifest, sizeStr };
+  }
+
+  let lastScheduledRunDate = '';
+  setInterval(async () => {
+    try {
+      const row = getGoogleDriveRow();
+      if (!row || (!row.schedule_enabled && !row.local_backup_enabled && !row.google_drive_backup_enabled)) return;
+
+      const now = new Date();
+      const currentH = String(now.getHours()).padStart(2, '0');
+      const currentM = String(now.getMinutes()).padStart(2, '0');
+      const currentTime24 = `${currentH}:${currentM}`;
+
+      let targetTime24 = (row.schedule_time || '10:00').trim();
+      const ampmMatch = targetTime24.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+      if (ampmMatch) {
+        let h = parseInt(ampmMatch[1], 10);
+        const m = ampmMatch[2];
+        const isPM = ampmMatch[3].toUpperCase() === 'PM';
+        if (isPM && h < 12) h += 12;
+        if (!isPM && h === 12) h = 0;
+        targetTime24 = `${String(h).padStart(2, '0')}:${m}`;
+      }
+
+      const todayStr = now.toISOString().slice(0, 10);
+      if (currentTime24 === targetTime24 && lastScheduledRunDate !== todayStr) {
+        lastScheduledRunDate = todayStr;
+        console.log(`[Auto-Backup] Triggering scheduled backup for ${todayStr} at ${currentTime24}...`);
+
+        if (row.local_backup_enabled || row.schedule_enabled) {
+          runLocalBackup();
+        }
+        if (row.google_drive_backup_enabled && row.connected && row.refresh_token) {
+          await runGoogleDriveBackup();
+        }
+      }
+    } catch (e) {
+      console.warn('[Auto-Backup] Scheduler error:', e.message);
+    }
+  }, 60000);
 
   const numericValue = value => {
     if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
@@ -2033,6 +2474,164 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     if (restoreMatch && request.method === 'POST') {
       try { return json(response, 200, { data: restoreBackup(restoreMatch[1]) }); }
       catch (error) { return json(response, 400, { message: error.message || 'Restore failed' }); }
+    }
+
+    // Google Drive Backup & Settings Routes
+    if (url.pathname === '/api/settings/google-drive' || url.pathname === '/api/backups/google/status') {
+      if (request.method === 'GET') return json(response, 200, { data: getGoogleDriveStatus() });
+      return json(response, 405, { message: 'Method not allowed' });
+    }
+
+    if (url.pathname === '/api/settings/google-drive/oauth') {
+      if (request.method === 'POST' || request.method === 'PUT') {
+        try {
+          const body = await readJson(request);
+          return json(response, 200, { data: saveGoogleDriveOAuth(body) });
+        } catch (error) {
+          return json(response, 400, { message: error.message || 'Failed to save OAuth settings' });
+        }
+      }
+      return json(response, 405, { message: 'Method not allowed' });
+    }
+
+    if (url.pathname === '/api/settings/google-drive/connect' || url.pathname === '/api/backups/google/connect') {
+      if (request.method === 'POST' || request.method === 'GET') {
+        try {
+          return json(response, 200, { data: { authorizationUrl: getGoogleDriveConnectUrl() } });
+        } catch (error) {
+          return json(response, 400, { message: error.message || 'Failed to get authorization URL' });
+        }
+      }
+      return json(response, 405, { message: 'Method not allowed' });
+    }
+
+    if (url.pathname === '/api/settings/google-drive/callback' || url.pathname === '/api/backups/google/callback') {
+      if (request.method === 'GET') {
+        const code = url.searchParams.get('code');
+        const errorParam = url.searchParams.get('error');
+        if (errorParam || !code) {
+          response.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+          return response.end(`
+            <!DOCTYPE html><html><head><meta charset="utf-8"><title>Connection Failed</title>
+            <style>body{font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#fff1f2;color:#9f1239;}
+            .box{background:white;padding:36px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.08);text-align:center;max-width:440px;border:1px solid #fecdd3;}
+            h2{color:#e11d48;margin:0 0 10px;}p{font-size:14px;color:#475569;margin:0 0 20px;}button{background:#e11d48;color:white;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;}</style>
+            </head><body><div class="box"><h2>Connection Cancelled or Failed</h2><p>${errorParam || 'No authorization code received from Google.'}</p><button onclick="window.close()">Close Window</button></div></body></html>
+          `);
+        }
+        try {
+          const { userEmail } = await handleGoogleDriveOAuthCallback(code);
+          response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          return response.end(`
+            <!DOCTYPE html><html><head><meta charset="utf-8"><title>Google Drive Connected</title>
+            <style>body{font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f0fdf4;color:#166534;}
+            .box{background:white;padding:40px;border-radius:16px;box-shadow:0 10px 25px rgba(0,0,0,0.08);text-align:center;max-width:460px;border:1px solid #bbf7d0;}
+            h2{color:#15803d;margin:0 0 12px;}p{color:#374151;font-size:14px;margin:0 0 24px;line-height:1.5;}
+            .email{display:inline-block;padding:5px 14px;background:#dcfce7;color:#166534;font-weight:700;border-radius:20px;margin-bottom:16px;font-size:14px;}
+            button{background:#16a34a;color:white;padding:10px 24px;border-radius:8px;font-weight:600;font-size:14px;border:none;cursor:pointer;}
+            </style></head><body><div class="box"><h2>Google Drive Connected!</h2><div class="email">${userEmail}</div>
+            <p>Your Google Drive account has been connected to <strong>ThreadFlow Garment ERP</strong>. Backups will now upload directly to Google Drive.</p>
+            <button onclick="window.close()">Close This Tab</button>
+            <script>
+              try { if (window.opener) window.opener.postMessage({ type: 'GOOGLE_DRIVE_CONNECTED' }, '*'); } catch(e){}
+              setTimeout(() => { try { window.close(); } catch(e){} }, 2500);
+            </script></div></body></html>
+          `);
+        } catch (error) {
+          response.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
+          return response.end(`
+            <!DOCTYPE html><html><head><meta charset="utf-8"><title>Authorization Failed</title>
+            <style>body{font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#fff1f2;color:#9f1239;}
+            .box{background:white;padding:36px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.08);text-align:center;max-width:440px;border:1px solid #fecdd3;}
+            h2{color:#e11d48;margin:0 0 10px;}p{font-size:14px;color:#475569;margin:0 0 20px;}button{background:#e11d48;color:white;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;}</style>
+            </head><body><div class="box"><h2>OAuth Error</h2><p>${error.message || 'Token exchange failed'}</p><button onclick="window.close()">Close Window</button></div></body></html>
+          `);
+        }
+      }
+      return json(response, 405, { message: 'Method not allowed' });
+    }
+
+    if (url.pathname === '/api/settings/google-drive/disconnect' || url.pathname === '/api/backups/google/disconnect') {
+      if (request.method === 'POST') {
+        try {
+          return json(response, 200, { data: disconnectGoogleDrive() });
+        } catch (error) {
+          return json(response, 500, { message: error.message || 'Failed to disconnect' });
+        }
+      }
+      return json(response, 405, { message: 'Method not allowed' });
+    }
+
+    if (url.pathname === '/api/settings/google-drive/schedule' || url.pathname === '/api/backups/google/schedule') {
+      if (request.method === 'POST' || request.method === 'PUT') {
+        try {
+          const body = await readJson(request);
+          return json(response, 200, { data: saveGoogleDriveSchedule(body) });
+        } catch (error) {
+          return json(response, 400, { message: error.message || 'Failed to save schedule' });
+        }
+      }
+      return json(response, 405, { message: 'Method not allowed' });
+    }
+
+    if (url.pathname === '/api/settings/google-drive/run' || url.pathname === '/api/backups/google/run') {
+      if (request.method === 'POST') {
+        try {
+          const result = await runGoogleDriveBackup();
+          return json(response, 200, { data: result });
+        } catch (error) {
+          return json(response, 500, { message: error.message || 'Google Drive backup failed' });
+        }
+      }
+      return json(response, 405, { message: 'Method not allowed' });
+    }
+
+    if (url.pathname === '/api/settings/local-backup/run') {
+      if (request.method === 'POST') {
+        try {
+          const result = runLocalBackup();
+          return json(response, 200, { data: result });
+        } catch (error) {
+          return json(response, 500, { message: error.message || 'Local backup failed' });
+        }
+      }
+      return json(response, 405, { message: 'Method not allowed' });
+    }
+
+    if (url.pathname === '/api/settings/google-drive/files' || url.pathname === '/api/backups/google/files') {
+      if (request.method === 'GET') {
+        return json(response, 200, { data: { items: listGoogleDriveBackupFiles() } });
+      }
+      return json(response, 405, { message: 'Method not allowed' });
+    }
+
+    const driveDownloadMatch = url.pathname.match(/^\/api\/(?:settings\/google-drive|backups\/google)\/files\/([a-z0-9-]+)\/download$/i);
+    if (driveDownloadMatch && request.method === 'GET') {
+      const backupId = driveDownloadMatch[1];
+      try {
+        const { fileName, buffer } = await getGoogleDriveBackupStream(backupId);
+        response.writeHead(200, {
+          'Content-Type': 'application/zip',
+          'Content-Length': buffer.length,
+          'Content-Disposition': `attachment; filename="${fileName}"`,
+          'Cache-Control': 'no-store',
+          'Access-Control-Allow-Origin': '*'
+        });
+        return response.end(buffer);
+      } catch (error) {
+        return json(response, 500, { message: error.message || 'Google Drive download failed' });
+      }
+    }
+
+    const driveRestoreMatch = url.pathname.match(/^\/api\/(?:settings\/google-drive|backups\/google)\/files\/([a-z0-9-]+)\/restore$/i);
+    if (driveRestoreMatch && request.method === 'POST') {
+      const backupId = driveRestoreMatch[1];
+      try {
+        const result = await restoreGoogleDriveBackup(backupId);
+        return json(response, 200, { data: result });
+      } catch (error) {
+        return json(response, 500, { message: error.message || 'Google Drive restore failed' });
+      }
     }
 
     if (url.pathname === '/api/media' && request.method === 'POST') {

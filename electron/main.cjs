@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { startLocalApi } = require('./local-api.cjs');
@@ -23,9 +23,11 @@ const createWindow = () => {
     backgroundColor: '#f4f7f5',
     title: 'Teli ThreadFlow Garment',
     icon: path.join(__dirname, '../build/icon.png'),
+    autoHideMenuBar: true,
     show: false,
     webPreferences: { contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.cjs') },
   });
+  mainWindow.setMenuBarVisibility(false);
   mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.webContents.on('did-fail-load', (_event, code, description) => {
     mainWindow.show();
@@ -33,9 +35,9 @@ const createWindow = () => {
   });
   const showFallback = setTimeout(() => { if (mainWindow && !mainWindow.isVisible()) mainWindow.show(); }, 5000);
   mainWindow.once('show', () => clearTimeout(showFallback));
-  const dev = !app.isPackaged;
+  const useDevServer = process.env.THREADFLOW_DEV_SERVER === 'true';
   const devUrl = process.env.VITE_HTTPS === 'true' ? 'https://localhost:5173' : 'http://localhost:5173';
-  dev ? mainWindow.loadURL(devUrl) : mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+  useDevServer ? mainWindow.loadURL(devUrl) : mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   mainWindow.on('closed', () => { mainWindow = null; });
 };
 
@@ -75,6 +77,7 @@ if (hasLock) {
     mainWindow.focus();
   });
   app.whenReady().then(async () => {
+    Menu.setApplicationMenu(null);
     if (app.isPackaged) app.setAppUserModelId('in.teli.threadflow');
     try {
       await startLocalApi({ dataDirectory: app.getPath('userData') });

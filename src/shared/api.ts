@@ -74,15 +74,18 @@ export const downloadBackup=async(id:string)=>{
   return true;
 };
 
-export type GoogleDriveBackupStatus={configured:boolean;connected:boolean;connectedEmail:string;folderName:string;scheduleEnabled:boolean;scheduleTime:string;timezone:string;lastBackupAt:string|null;lastBackupStatus:string;lastBackupMessage:string;lastBackupFile?:string|null};
-export type GoogleDriveBackupFile={id:string;fileName:string;sizeBytes:number;createdAt:string;status:string};
+export type GoogleDriveBackupStatus={configured:boolean;clientId?:string;clientSecretConfigured?:boolean;redirectUri?:string;connected:boolean;connectedEmail:string;folderName:string;folderId?:string;scheduleEnabled:boolean;scheduleTime:string;localBackupEnabled?:boolean;cloudBackupEnabled?:boolean;googleDriveBackupEnabled?:boolean;keepLocalBackups?:number;lastBackupAt:string|null;lastBackupStatus:string;lastBackupMessage:string;lastBackupSize?:string;lastLocalBackupAt?:string|null;lastLocalBackupSize?:string;lastLocalBackupStatus?:string;backupsCount?:number};
+export type GoogleDriveBackupFile={id:string;fileName:string;driveFileId?:string;sizeBytes:number;sizeStr?:string;createdAt:string;status:string};
 export const getGoogleDriveBackupStatus=()=>backupRequest('/google/status') as Promise<GoogleDriveBackupStatus>;
+export const saveGoogleDriveOAuth=(value:{clientId:string;clientSecret:string;redirectUri:string})=>publicRequest<GoogleDriveBackupStatus>('/api/settings/google-drive/oauth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(value)});
 export const connectGoogleDrive=()=>backupRequest('/google/connect',{method:'POST'}) as Promise<{authorizationUrl:string}>;
 export const disconnectGoogleDrive=()=>backupRequest('/google/disconnect',{method:'POST'}) as Promise<GoogleDriveBackupStatus>;
-export const saveGoogleDriveSchedule=(value:{scheduleEnabled:boolean;scheduleTime:string;timezone:string})=>backupRequest('/google/schedule',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(value)}) as Promise<GoogleDriveBackupStatus>;
+export const saveGoogleDriveSchedule=(value:{scheduleEnabled?:boolean;scheduleTime?:string;localBackupEnabled?:boolean;cloudBackupEnabled?:boolean;googleDriveBackupEnabled?:boolean;keepLocalBackups?:number})=>publicRequest<GoogleDriveBackupStatus>('/api/settings/google-drive/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(value)});
 export const runGoogleDriveBackup=()=>backupRequest('/google/run',{method:'POST'});
+export const runLocalBackup=()=>publicRequest<{manifest:BackupManifest;sizeStr:string}>('/api/settings/local-backup/run',{method:'POST'});
 export const listGoogleDriveBackups=()=>backupRequest('/google/files') as Promise<{items:GoogleDriveBackupFile[]}>;
-export const downloadGoogleDriveBackup=async(file:GoogleDriveBackupFile)=>{const response=await fetch(`${API_BASE_URL}/api/backups/google/files/${encodeURIComponent(file.id)}/download`,{headers:{'X-Tenant-ID':getActiveTenantId()}});if(!response.ok)throw new Error('Google Drive backup download failed');const blob=await response.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=file.fileName;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)};
+export const downloadGoogleDriveBackup=async(file:GoogleDriveBackupFile)=>{const response=await fetch(`${API_BASE_URL}/api/settings/google-drive/files/${encodeURIComponent(file.id)}/download`,{headers:{'X-Tenant-ID':getActiveTenantId()}});if(!response.ok)throw new Error('Google Drive backup download failed');const blob=await response.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=file.fileName;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)};
+export const restoreGoogleDriveBackup=(id:string)=>publicRequest<{data:BackupManifest}>('/api/settings/google-drive/files/'+encodeURIComponent(id)+'/restore',{method:'POST'});
 
 export type SubscriptionInfo={planName:string;fromDate:string;toDate:string;status:'Active'|'Expired'|'Not Started';licenseHint:string};
 export type BootstrapInfo={subscription:SubscriptionInfo|null;hasUser:boolean};
