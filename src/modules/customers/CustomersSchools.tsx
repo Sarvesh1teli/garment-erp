@@ -311,11 +311,11 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
       if(summaryFilterStatus!=='All'){
         if(summaryFilterStatus==='available'&&!(row.ready>0))return false;
         if(summaryFilterStatus==='zero-ready'&&!(row.ready<=0))return false;
-        if(summaryFilterStatus==='ready'&&!(row.stitched>=row.required&&row.required>0))return false;
+        if(summaryFilterStatus==='ready'&&!(row.stitched>=row.required&&(row.required>0||row.stitched>0)))return false;
         if(summaryFilterStatus==='partial-ready'&&!(row.stitched>0&&row.stitched<row.required))return false;
         if(summaryFilterStatus==='pending-prod'&&!(row.pendingProd>0))return false;
-        if(summaryFilterStatus==='delivered'&&!(row.delivered>=row.required&&row.required>0))return false;
-        if(summaryFilterStatus==='partial-del'&&!(row.delivered>0&&row.delivered<row.required))return false;
+        if(summaryFilterStatus==='delivered'&&!(row.delivered>=(row.required>0?row.required:row.stitched)&&(row.required>0||row.stitched>0)))return false;
+        if(summaryFilterStatus==='partial-del'&&!(row.delivered>0&&row.delivered<(row.required>0?row.required:row.stitched)))return false;
         if(summaryFilterStatus==='pending-del'&&!(row.pendingDel>0))return false;
       }
       return true;
@@ -717,7 +717,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
       gstPercent:gstPct
     };
 
-    const currentAdvanceCredit = Math.max(0, schoolCollectedTotal - schoolDeliveredTotal);
+    const currentAdvanceCredit = Math.max(0, schoolCollectedTotal + schoolDiscountedTotal - schoolDeliveredTotal);
     let advanceAdjustAmt = 0;
 
     if (autoAdjustAdvance && currentAdvanceCredit > 0) {
@@ -776,8 +776,13 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
       },0);
   },[viewSchool,schoolCollections]);
 
-  const schoolPendingBalance=Math.max(0,schoolDeliveredTotal-schoolCollectedTotal);
-  const schoolAdvanceBalance=Math.max(0,schoolCollectedTotal-schoolDeliveredTotal);
+  const schoolDiscountedTotal=useMemo(()=>{
+    if(!viewSchool)return 0;
+    const invoiceNos=new Set(invoices.filter(invoice=>invoice.customer===viewSchool.name).map(invoice=>invoice.invoiceNo));
+    return payments.filter(payment=>payment.customer===viewSchool.name||invoiceNos.has(payment.invoiceNo)).reduce((sum,payment)=>sum+Number(payment.discount||0),0);
+  },[viewSchool,invoices,payments]);
+  const schoolPendingBalance=Math.max(0,schoolDeliveredTotal-schoolCollectedTotal-schoolDiscountedTotal);
+  const schoolAdvanceBalance=Math.max(0,schoolCollectedTotal+schoolDiscountedTotal-schoolDeliveredTotal);
 
   const selectedRowBreakdown=useMemo(()=>{
     if(!viewSchool||!selectedSummaryRow)return null;
@@ -1127,6 +1132,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
                       <strong style={{fontSize:15,margin:0}}>{money(schoolCollectedTotal)}</strong>
                     </div>
                   </div>
+                  {schoolDiscountedTotal>0&&<div className="metric" style={{padding:'6px 10px',gap:8,minHeight:48,alignItems:'center'}}><div className="metricicon purple" style={{width:28,height:28,borderRadius:6}}><IndianRupee size={14}/></div><div><span style={{fontSize:10}}>Discounted</span><strong style={{fontSize:15,margin:0}}>{money(schoolDiscountedTotal)}</strong></div></div>}
                   <div
                     className="metric"
                     style={{
@@ -1364,7 +1370,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
                           title={`Click to view pending production for ${row.garment}`}
                           style={{cursor:'pointer'}}
                         >
-                          {row.stitched>=row.required&&row.required>0?<span className="status completed">🟢 Fully Ready ({row.stitched}/{row.required})</span>:row.stitched>0?<span className="status pending">🟡 Partial Ready ({row.stitched}/{row.required})</span>:<span className="status danger">⚪ Pending ({row.pendingProd} Pcs)</span>}
+                          {row.stitched>=row.required&&(row.required>0||row.stitched>0)?<span className="status completed">🟢 Fully Ready ({row.required>0?`${row.stitched}/${row.required}`:`${row.stitched} Pcs`})</span>:row.stitched>0?<span className="status pending">🟡 Partial Ready ({row.stitched}/{row.required})</span>:<span className="status danger">⚪ Pending ({row.pendingProd} Pcs)</span>}
                         </td>
                         <td
                           onClick={e=>{e.stopPropagation();setActiveMetricModal('delivered');setMetricModalSearch(row.garment)}}
@@ -1378,7 +1384,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
                           title={`Click to view delivery history for ${row.garment}`}
                           style={{cursor:'pointer'}}
                         >
-                          {row.delivered>=row.required&&row.required>0?<span className="status completed">🟢 Fully Delivered ({row.delivered}/{row.required})</span>:row.delivered>0?<span className="status in-progress">🔵 Partial Delivered ({row.delivered}/{row.required})</span>:<span className="status pending">⚪ Pending ({row.pendingDel} Pcs)</span>}
+                          {row.delivered>=(row.required>0?row.required:row.stitched)&&(row.required>0||row.stitched>0)?<span className="status completed">🟢 Fully Delivered ({row.required>0?`${row.delivered}/${row.required}`:`${row.delivered} Pcs`})</span>:row.delivered>0?<span className="status in-progress">🔵 Partial Delivered ({row.delivered}/{row.required>0?row.required:row.stitched})</span>:<span className="status pending">⚪ Pending ({row.pendingDel} Pcs)</span>}
                         </td>
                       </tr>
                     );
@@ -2189,7 +2195,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
                               </strong>
                             </td>
                             <td>
-                              {r.stitched >= r.required && r.required > 0 ? (
+                              {r.stitched >= r.required && (r.required > 0 || r.stitched > 0) ? (
                                 <span className="status completed">🟢 Fully Ready</span>
                               ) : r.stitched > 0 ? (
                                 <span className="status pending">🟡 Partial Ready</span>
@@ -2829,9 +2835,10 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
                       <div className="metricicon blue"><WalletCards size={16} /></div>
                       <div><span>Total Collected</span><strong style={{ color: '#0284c7' }}>{money(schoolCollectedTotal)}</strong><small>total receipts</small></div>
                     </div>
-                    <div className="metric" style={{ padding: '8px 12px', border: '1.5px solid #ef4444', background: '#fef2f2' }}>
+                    <div className="metric" style={{padding:'8px 12px'}}><div className="metricicon purple"><IndianRupee size={16}/></div><div><span>Discounted</span><strong>{money(schoolDiscountedTotal)}</strong><small>settlement discounts / waivers</small></div></div>
+                    <div className="metric" style={{ padding: '8px 12px', border: schoolPendingBalance>0?'1.5px solid #ef4444':'1px solid #cbd5e1', background: schoolPendingBalance>0?'#fef2f2':'#f0fdf4' }}>
                       <div className="metricicon orange" style={{ background: '#fee2e2', color: '#dc2626' }}><AlertTriangle size={16} /></div>
-                      <div><span style={{ color: '#b91c1c', fontWeight: 700 }}>Pending Balance Due</span><strong style={{ color: '#dc2626' }}>{money(schoolPendingBalance)}</strong><small>outstanding due</small></div>
+                      <div><span style={{ color: schoolPendingBalance>0?'#b91c1c':'#166534', fontWeight: 700 }}>Pending Balance Due</span><strong style={{ color: schoolPendingBalance>0?'#dc2626':'#166534' }}>{money(schoolPendingBalance)}</strong><small>{schoolPendingBalance>0?'outstanding due':'fully settled'}</small></div>
                     </div>
                   </div>
 

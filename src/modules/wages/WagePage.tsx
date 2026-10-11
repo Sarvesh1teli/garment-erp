@@ -5,7 +5,7 @@ import type { AdvanceEntry, AttendanceEntry, Employee, GarmentPrice, LeaveDeduct
 import type { CompanySettings } from '../settings/SettingsPage';
 import { deleteSalaryPayment } from '../../shared/api';
 import { defaultGarmentPrices, defaultWorkTypes } from '../../shared/defaults';
-import { PrintPreview, SalaryPrintFooter, SalaryPrintHeader, Stats, Table } from '../../shared/ui';
+import { CompanyPrintHeader, PrintPreview, SalaryPrintFooter, SalaryPrintHeader, Stats, Table } from '../../shared/ui';
 import { inRange, money, useStoredState, workTypeCode } from '../../shared/utils';
 
 export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,workEntries,setWorkEntries,workTypeHistory,setWorkTypeHistory,salaryHistory,setSalaryHistory,attendance,company,garmentPrices:propGarmentPrices,setGarmentPrices:propSetGarmentPrices}:{employees:Employee[];workTypes:WorkType[];setWorkTypes:React.Dispatch<React.SetStateAction<WorkType[]>>;advances:AdvanceEntry[];setAdvances:React.Dispatch<React.SetStateAction<AdvanceEntry[]>>;workEntries:WorkEntry[];setWorkEntries:React.Dispatch<React.SetStateAction<WorkEntry[]>>;workTypeHistory:string[][];setWorkTypeHistory:React.Dispatch<React.SetStateAction<string[][]>>;salaryHistory:SalaryPayment[];setSalaryHistory:React.Dispatch<React.SetStateAction<SalaryPayment[]>>;attendance?:AttendanceEntry[];company:CompanySettings;garmentPrices?:GarmentPrice[];setGarmentPrices?:React.Dispatch<React.SetStateAction<GarmentPrice[]>>}){
@@ -13,6 +13,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
   const [to,setTo]=useState(()=>new Date().toISOString().slice(0,10));
   const [employeeId,setEmployeeId]=useState('');
   const [recover,setRecover]=useState(0);
+  const [roundOffAdjustment,setRoundOffAdjustment]=useState(0);
   const [mode,setMode]=useState<'Cash'|'UPI'|'Bank'>('Cash');
   const [wageTab,setWageTab]=useState<'work'|'advance'|'salary'|'history'|'masters'|'reports'>('work');
   const [masterSubTab,setMasterSubTab]=useState<'work-type'|'rate-history'|'garment-price'>('work-type');
@@ -56,6 +57,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
   const [showSalaryPrint,setShowSalaryPrint]=useState(false);
   const [showWorkBreakdown,setShowWorkBreakdown]=useState(false);
   const [showWorkBreakdownPrint,setShowWorkBreakdownPrint]=useState(false);
+  const [printReportIndex,setPrintReportIndex]=useState<number|null>(null);
   const [breakdownShowRate,setBreakdownShowRate]=useState(true);
   const [viewHistory,setViewHistory]=useState<SalaryPayment|null>(null);
   const [leaveDays,setLeaveDays]=useState(0);
@@ -142,7 +144,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
   const pendingAdvance=openingAdvance+advanceDuring;
   const maxRecover=Math.min(totalWork,pendingAdvance);
   const safeRecover=Math.min(Math.max(0,recover),maxRecover);
-  const netPayable=totalWork-safeRecover;
+  const netPayable=Math.round((totalWork-safeRecover+roundOffAdjustment)*100)/100;
   const closingAdvance=pendingAdvance-safeRecover;
   const ledger=[
     ...advances.filter(a=>a.employeeId===employeeId&&a.date<=to).map(a=>({date:a.date,type:'Advance Given',amount:a.amount,delta:a.amount})),
@@ -151,7 +153,14 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
   ].sort((a,b)=>a.date.localeCompare(b.date));
   let ledgerBalance=0;
   const ledgerRows=ledger.map(l=>{ledgerBalance=Math.max(0,ledgerBalance+l.delta);return [l.date,l.type,money(l.amount),money(ledgerBalance)]});
-  const employeeSalaryRows=[employee].map(e=>{const rows=workEntries.filter(w=>w.employeeId===e.id&&inRange(w.date,from,to));const gross=rows.reduce((sum,w)=>{const wt=workTypes.find(x=>x.id===w.workTypeId)||defaultWorkTypes.find(x=>x.id===w.workTypeId)!;return sum+w.quantity*wt.rate},0);const adv=advances.filter(a=>a.employeeId===e.id&&a.date<=to).reduce((a,b)=>a+b.amount,0);const rec=safeRecover;return [e.name,money(gross),money(adv),money(rec),money(Math.max(0,gross-rec))]});
+  const employeeSalaryRows=[employee].map(e=>{const rows=workEntries.filter(w=>w.employeeId===e.id&&inRange(w.date,from,to));const gross=rows.reduce((sum,w)=>{const wt=workTypes.find(x=>x.id===w.workTypeId)||defaultWorkTypes.find(x=>x.id===w.workTypeId)!;return sum+w.quantity*wt.rate},0);const adv=advances.filter(a=>a.employeeId===e.id&&a.date<=to).reduce((a,b)=>a+b.amount,0);const rec=safeRecover;return [e.name,money(gross),money(adv),money(rec),money(netPayable)]});
+  const wageReports=[
+    {title:'Staff-wise salary report',copy:'Gross work, advances, recovery and net payable',headers:['STAFF','WORK AMOUNT','ADVANCE','RECOVERED','NET PAYABLE'],rows:employeeSalaryRows,paged:true},
+    {title:'Employee ledger report',copy:'Advance given and recovered balance trail',headers:['DATE','TYPE','AMOUNT','BALANCE ADVANCE'],rows:ledgerRows,paged:true},
+    {title:'Work-type-wise production report',copy:`${totalProduction} pieces completed by ${employee.name} between selected dates`,headers:['WORK TYPE','TOTAL QTY','RATE','AMOUNT'],rows:workTypes.map(wt=>{const rows=periodWork.filter(w=>w.workTypeId===wt.id);const qty=rows.reduce((sum,w)=>sum+w.quantity,0);return [`${workTypeCode(wt)} - ${wt.name}`,String(qty),money(wt.rate),money(qty*wt.rate)]}),paged:true},
+    {title:'Advance balance report',copy:'Pending advance after selected salary recovery',headers:['EMPLOYEE','ADVANCE GIVEN','RECOVERED','PENDING'],rows:[[employee.name,money(advances.filter(a=>a.employeeId===employeeId&&a.date<=to).reduce((sum,a)=>sum+a.amount,0)),money(safeRecover),money(Math.max(0,advances.filter(a=>a.employeeId===employeeId&&a.date<=to).reduce((sum,a)=>sum+a.amount,0)-safeRecover))]],paged:false}
+  ];
+  const selectedPrintReport=printReportIndex===null?null:wageReports[printReportIndex];
   const workReportPageCount=Math.max(1,Math.ceil(workRows.length/workReportPageSize));
   const summaryPageCount=Math.max(1,Math.ceil(summary.length/summaryPageSize));
   const pagedWorkRows=workRows.slice((workReportPage-1)*workReportPageSize,workReportPage*workReportPageSize);
@@ -259,10 +268,10 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
     const lDays=p.leaveDays??(p.id==='CURRENT'?leaveDays:0);
     const lDeduct=p.leaveDeductionAmount??(p.id==='CURRENT'?leaveDeductionAmount:0);
 
-    return <div className="tax-doc salary-doc"><SalaryPrintHeader company={company}/><h1>SALARY SLIP</h1><div className="doc-meta salary-meta"><div><b>Slip No</b><span>{no}</span></div><div><b>Pay Period</b><span>{p.from} to {p.to}</span></div><div><b>Salary Type</b><span>{salaryTypeLabel}</span></div><div><b>Days Worked</b><span>{daysWorked} Days</span></div><div><b>Pieces Completed</b><span>{p.pieces} pcs</span></div><div><b>Payment Mode</b><span>{p.mode}</span></div></div><div className="doc-parties"><div><h3>EMPLOYEE DETAILS</h3><p><strong>{emp.name}</strong></p><p>Employee ID: {p.employeeId}</p><p>Category: {emp.type}</p><p>Salary Structure: <strong>{salaryTypeLabel}</strong></p></div><div><h3>PAYMENT SUMMARY</h3><p>Gross work salary: <strong>{money(p.gross)}</strong></p><p>Opening advance balance: {money(p.openingAdvance)}</p><p>Advance during period: {money(p.advanceDuring)}</p><p>Pending advance before recovery: {money(p.pendingAdvance)}</p></div></div><div className="salary-breakup"><table className="doc-table"><thead><tr><th>EARNINGS TYPE</th><th>CALCULATION DETAIL</th><th>AMOUNT</th></tr></thead><tbody><tr><td>{salaryTypeLabel} ({p.from} to {p.to})</td><td>{st==='Fixed Monthly'?`Base Monthly Pay (${money(emp.monthlySalary||fixedMonthlySalary)})`:st==='Daily Wage'?`Daily Rate (${money(emp.dailyRate||dailyWageRate)}/day × ${daysWorked} Days)`:`${daysWorked} Days • ${p.pieces} pcs`}</td><td>{money(st==='Fixed Monthly'?(emp.monthlySalary||fixedMonthlySalary):p.gross)}</td></tr>{st==='Fixed Monthly'&&lDeduct>0&&<tr><td>Less: Leave Deduction</td><td>{lDays} Days absent ({p.leaveDeductionMode==='Auto'?`Auto: ${money(emp.monthlySalary||fixedMonthlySalary)}/30 per day`:'Manual deduction'})</td><td>- {money(lDeduct)}</td></tr>}<tr className="salary-breakup-total"><td colSpan={2}>Total Gross Earnings</td><td>{money(p.gross)}</td></tr></tbody></table><table className="doc-table"><thead><tr><th>DEDUCTIONS</th><th>AMOUNT</th></tr></thead><tbody><tr><td>Advance recovered</td><td>{money(p.recover)}</td></tr><tr className="salary-breakup-total"><td>Total Deductions</td><td>{money(p.recover)}</td></tr></tbody></table></div><div className="doc-totals salary-total"><div><p>Net salary paid<strong>{money(p.netPayable)}</strong></p></div><div><p>Closing advance balance<strong>{money(p.closingAdvance)}</strong></p></div></div><div className="doc-footer salary-footer"><div><h3>Authorised Signatory</h3><span>Garment Production ERP</span></div><div><h3>Employee Signature</h3></div></div><div className="doc-top-note"><p>{p.remarks||`${salaryTypeLabel} salary generated for pay period.`}</p></div><SalaryPrintFooter/></div>;
+    return <div className="tax-doc salary-doc"><SalaryPrintHeader company={company}/><h1>SALARY SLIP</h1><div className="doc-meta salary-meta"><div><b>Slip No</b><span>{no}</span></div><div><b>Pay Period</b><span>{p.from} to {p.to}</span></div><div><b>Salary Type</b><span>{salaryTypeLabel}</span></div><div><b>Days Worked</b><span>{daysWorked} Days</span></div><div><b>Pieces Completed</b><span>{p.pieces} pcs</span></div><div><b>Payment Mode</b><span>{p.mode}</span></div></div><div className="doc-parties"><div><h3>EMPLOYEE DETAILS</h3><p><strong>{emp.name}</strong></p><p>Employee ID: {p.employeeId}</p><p>Category: {emp.type}</p><p>Salary Structure: <strong>{salaryTypeLabel}</strong></p></div><div><h3>PAYMENT SUMMARY</h3><p>Gross work salary: <strong>{money(p.gross)}</strong></p><p>Opening advance balance: {money(p.openingAdvance)}</p><p>Advance during period: {money(p.advanceDuring)}</p><p>Pending advance before recovery: {money(p.pendingAdvance)}</p></div></div><div className="salary-breakup"><table className="doc-table"><thead><tr><th>EARNINGS TYPE</th><th>CALCULATION DETAIL</th><th>AMOUNT</th></tr></thead><tbody><tr><td>{salaryTypeLabel} ({p.from} to {p.to})</td><td>{st==='Fixed Monthly'?`Base Monthly Pay (${money(emp.monthlySalary||fixedMonthlySalary)})`:st==='Daily Wage'?`Daily Rate (${money(emp.dailyRate||dailyWageRate)}/day × ${daysWorked} Days)`:`${daysWorked} Days • ${p.pieces} pcs`}</td><td>{money(st==='Fixed Monthly'?(emp.monthlySalary||fixedMonthlySalary):p.gross)}</td></tr>{st==='Fixed Monthly'&&lDeduct>0&&<tr><td>Less: Leave Deduction</td><td>{lDays} Days absent ({p.leaveDeductionMode==='Auto'?`Auto: ${money(emp.monthlySalary||fixedMonthlySalary)}/30 per day`:'Manual deduction'})</td><td>- {money(lDeduct)}</td></tr>}<tr className="salary-breakup-total"><td colSpan={2}>Total Gross Earnings</td><td>{money(p.gross)}</td></tr></tbody></table><table className="doc-table"><thead><tr><th>DEDUCTIONS</th><th>AMOUNT</th></tr></thead><tbody><tr><td>Advance recovered</td><td>{money(p.recover)}</td></tr><tr className="salary-breakup-total"><td>Total Deductions</td><td>{money(p.recover)}</td></tr></tbody></table></div><table className="doc-table"><tbody><tr><td>Round Off</td><td>{money(p.roundOffAdjustment??0)}</td></tr></tbody></table><div className="doc-totals salary-total"><div><p>Net salary paid<strong>{money(p.netPayable)}</strong></p></div><div><p>Closing advance balance<strong>{money(p.closingAdvance)}</strong></p></div></div><div className="doc-footer salary-footer"><div><h3>Authorised Signatory</h3><span>Garment Production ERP</span></div><div><h3>Employee Signature</h3></div></div><div className="doc-top-note"><p>{p.remarks||`${salaryTypeLabel} salary generated for pay period.`}</p></div><SalaryPrintFooter/></div>;
   };
   
-  const salaryDoc=slipDoc({id:'CURRENT',paidDate:new Date().toISOString().slice(0,10),employeeId,from,to,recover:safeRecover,mode,remarks:'',gross:totalWork,openingAdvance,advanceDuring,pendingAdvance,netPayable,closingAdvance,pieces:totalProduction,workedDays:workedDaysCount,salaryType,leaveDays,leaveDeductionMode,leaveDeductionAmount},nextSalId);
+  const salaryDoc=slipDoc({id:'CURRENT',paidDate:new Date().toISOString().slice(0,10),employeeId,from,to,recover:safeRecover,mode,remarks:'',gross:totalWork,openingAdvance,advanceDuring,pendingAdvance,roundOffAdjustment,netPayable,closingAdvance,pieces:totalProduction,workedDays:workedDaysCount,salaryType,leaveDays,leaveDeductionMode,leaveDeductionAmount},nextSalId);
   // Build daily production breakdown: for each attendance-present day, sum workRows for that day + per-work-type breakdown
   const dailyProductionBreakdown = useMemo(() => {
     // Get all unique dates from attendance (Present or Half Day) sorted
@@ -337,6 +346,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
             <td style={{border:'1px solid #bbb',padding:'10px 12px',verticalAlign:'top',fontSize:13}}>
               <div>Gross work earnings: <strong style={{color:'#1e3a8a'}}>{money(totalWork)}</strong></div>
               <div>Advance recovered: <strong>{money(safeRecover)}</strong></div>
+              <div>Round Off: <strong>{money(roundOffAdjustment)}</strong></div>
               <div>Net payable: <strong style={{color:'#15803d',fontSize:14}}>{money(netPayable)}</strong></div>
               <div>Closing advance balance: <strong>{money(closingAdvance)}</strong></div>
             </td>
@@ -376,20 +386,21 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
 
       {/* DAILY WORK ACTIVITY */}
       {dailyProductionBreakdown.length > 0 && (
-        <div style={{border:'1.5px solid #222',borderTop:'none',padding:'10px 12px 12px'}}>
-          <div style={{fontWeight:700,fontSize:12,marginBottom:10}}>
-            📅 Daily Work Activity ({workedDaysCount} Days Worked):
+        <div className="salary-daily-activity">
+          <div className="salary-daily-title">
+            Daily Work Activity ({workedDaysCount} {workedDaysCount === 1 ? 'Day' : 'Days'} Worked):
           </div>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(4, 1fr)',gap:6}}>
+          <div className="salary-daily-grid">
             {dailyProductionBreakdown.map(day => (
-              <div key={day.date} style={{border:'1px solid #e2e8f0',borderRadius:6,padding:'6px 8px',background:'#fafafa'}}>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:2,gap:4}}>
-                  <span style={{fontWeight:700,fontSize:11}}>{day.displayDate}: {day.qty} pcs</span>
-                  <span style={{color:'#15803d',fontWeight:700,fontSize:11,whiteSpace:'nowrap'}}>Rs. {day.amount}</span>
+              <div key={day.date} className="salary-daily-card">
+                <div className="salary-daily-heading">
+                  <strong>{day.displayDate}</strong>
+                  <strong className="salary-daily-amount">{money(day.amount)}</strong>
                 </div>
+                <div className="salary-daily-qty">{day.qty} pcs</div>
                 {day.typeBreakdown.length > 0 && (
-                  <div style={{fontSize:10,color:'#475569',marginTop:1}}>
-                    [{day.typeBreakdown.join(', ')}]
+                  <div className="salary-daily-details">
+                    {day.typeBreakdown.map((entry, index) => <span key={index}>{entry}</span>)}
                   </div>
                 )}
               </div>
@@ -459,6 +470,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
       openingAdvance,
       advanceDuring,
       pendingAdvance,
+      roundOffAdjustment,
       netPayable,
       closingAdvance,
       pieces:totalProduction,
@@ -529,7 +541,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
         <span>REPORTS</span>
       </button>
     </div>
-    {wageTab!=='masters'&&<div className="filterbar salary-filter compact-wage-filter"><label>Employee<select value={employeeId} onChange={e=>{const id=e.target.value;setEmployeeId(id);setWorkForm(f=>({...f,employeeId:id}));}}><option value="">All Staff / Select employee</option>{activeStaff.map(e=><option value={e.id} key={e.id}>{e.name}</option>)}</select></label><label>From<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label><label>To<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label>{wageTab==="salary"&&<>{salaryType==='Fixed Monthly'&&<><label>Leave / Absent Days<input type="number" min="0" style={{width:'90px'}} value={leaveDays} onChange={e=>setLeaveDays(Number(e.target.value))}/></label><label>Leave Deduction Option<select value={leaveDeductionMode} onChange={e=>setLeaveDeductionMode(e.target.value as LeaveDeductionMode)}><option value="None">No Deduction (Full Pay)</option><option value="Auto">Automatic (Sal / 30 per day)</option><option value="Manual">Manual Deduction Entry</option></select></label>{leaveDeductionMode==='Manual'&&<label>Deduct Amount (Rs.)<input type="number" min="0" style={{width:'110px'}} value={manualDeduction} onChange={e=>setManualDeduction(Number(e.target.value))}/></label>}</>}<label>Recover this month<input type="number" min="0" value={recover} onChange={e=>setRecover(Number(e.target.value))}/></label><label>Payment mode<select value={mode} onChange={e=>setMode(e.target.value as "Cash"|"UPI"|"Bank")}><option>Cash</option><option>UPI</option><option>Bank</option></select></label><div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}><button type="button" className="primary" style={{ margin: 0, whiteSpace: 'nowrap' }} onClick={()=>setShowWorkBreakdown(v=>!v)}><Calculator size={16}/> Calculate salary</button><button type="button" className={showSalaryPayment ? "primary" : "outline"} style={{ margin: 0, whiteSpace: 'nowrap' }} onClick={()=>setShowSalaryPayment(v=>!v)} title="Open / Hide Salary payment screen"><ReceiptText size={16}/> Salary payment screen</button></div></>}</div>}
+    {wageTab!=='masters'&&<div className="filterbar salary-filter compact-wage-filter"><label>Employee<select value={employeeId} onChange={e=>{const id=e.target.value;setEmployeeId(id);setWorkForm(f=>({...f,employeeId:id}));}}><option value="">All Staff / Select employee</option>{activeStaff.map(e=><option value={e.id} key={e.id}>{e.name}</option>)}</select></label><label>From<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label><label>To<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label>{wageTab==="salary"&&<>{salaryType==='Fixed Monthly'&&<><label>Leave / Absent Days<input type="number" min="0" style={{width:'90px'}} value={leaveDays} onChange={e=>setLeaveDays(Number(e.target.value))}/></label><label>Leave Deduction Option<select value={leaveDeductionMode} onChange={e=>setLeaveDeductionMode(e.target.value as LeaveDeductionMode)}><option value="None">No Deduction (Full Pay)</option><option value="Auto">Automatic (Sal / 30 per day)</option><option value="Manual">Manual Deduction Entry</option></select></label>{leaveDeductionMode==='Manual'&&<label>Deduct Amount (Rs.)<input type="number" min="0" style={{width:'110px'}} value={manualDeduction} onChange={e=>setManualDeduction(Number(e.target.value))}/></label>}</>}<label>Recover this month<input type="number" min="0" value={recover} onChange={e=>setRecover(Number(e.target.value))}/></label><label>Round Off (Rs.)<input type="number" min="0" step="0.01" value={roundOffAdjustment} onChange={e=>setRoundOffAdjustment(Math.max(0,Number(e.target.value)||0))}/></label><label>Payment mode<select value={mode} onChange={e=>setMode(e.target.value as "Cash"|"UPI"|"Bank")}><option>Cash</option><option>UPI</option><option>Bank</option></select></label><div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}><button type="button" className="primary" style={{ margin: 0, whiteSpace: 'nowrap' }} onClick={()=>setShowWorkBreakdown(v=>!v)}><Calculator size={16}/> Calculate salary</button><button type="button" className={showSalaryPayment ? "primary" : "outline"} style={{ margin: 0, whiteSpace: 'nowrap' }} onClick={()=>setShowSalaryPayment(v=>!v)} title="Open / Hide Salary payment screen"><ReceiptText size={16}/> Salary payment screen</button></div></>}</div>}
     {wageTab==='work'&&<><div className="advance-grid">
       <article className="card salary-panel"><div className="cardhead"><div><h2>Daily work entry</h2><p>Enter one completed work type at a time for each staff member.</p></div><ClipboardList size={18}/></div><div className="advance-form"><label>Date<input type="date" value={workForm.date} onChange={e=>setWorkForm({...workForm,date:e.target.value})}/></label><label>Employee<select value={workForm.employeeId} onChange={e=>{const id=e.target.value;setWorkForm({...workForm,employeeId:id});setEmployeeId(id);}}><option value="">Select employee</option>{activeStaff.map(e=><option value={e.id} key={e.id}>{e.name}</option>)}</select></label><label>Work code<select value={workForm.workTypeId} onChange={e=>setWorkForm({...workForm,workTypeId:e.target.value})}><option value="">Select work type</option>{activeWorkTypes.map(w=><option value={w.id} key={w.id}>{workTypeCode(w)}</option>)}</select></label><label>Work type<select value={workForm.workTypeId} onChange={e=>setWorkForm({...workForm,workTypeId:e.target.value})}><option value="">Select work type</option>{activeWorkTypes.map(w=><option value={w.id} key={w.id}>{workTypeCode(w)} - {w.name} - {money(w.rate)} / {w.unit}</option>)}</select></label><label>Quantity<input type="number" min="0" value={workForm.quantity} onChange={e=>setWorkForm({...workForm,quantity:Number(e.target.value)})}/></label><label className="wide">Remarks<input value={workForm.remarks} onChange={e=>setWorkForm({...workForm,remarks:e.target.value})} placeholder="Batch, order, or notes"/></label><button className="primary" onClick={addWorkEntry}><Plus size={16}/> Add work</button></div></article>
       <Table title="Daily work entry history" copy={`Saved entries for ${employee.name} in the selected date range`} headers={['ENTRY ID','DATE','EMPLOYEE','WORK TYPE','QTY','AMOUNT']} rows={periodWork.map(w=>{const wt=workTypes.find(x=>x.id===w.workTypeId)||defaultWorkTypes.find(x=>x.id===w.workTypeId)!;return [w.id,w.date,employee.name,`${workTypeCode(wt)} - ${wt.name}`,String(w.quantity),money(w.quantity*wt.rate)]})} paged/>
@@ -557,7 +569,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
           </span>
         </div>
       )}
-      <Stats className="salary-tab-metrics" values={[[ 'Total Work Amount',money(totalWork),salaryType==='Fixed Monthly'?(leaveDeductionAmount>0?`${money(fixedMonthlySalary)} base - ${money(leaveDeductionAmount)} leave`:`${money(fixedMonthlySalary)} monthly base`):`${workRows.length} daily entries`],[ 'Pending Advance',money(pendingAdvance),`${money(openingAdvance)} opening + ${money(advanceDuring)}`],[ 'Net Salary Payable',money(netPayable),`${money(safeRecover)} recovery`],[ 'Closing Advance',money(closingAdvance),'after manual recovery' ]]}/>
+      <Stats className="salary-tab-metrics" values={[[ 'Total Work Amount',money(totalWork),salaryType==='Fixed Monthly'?(leaveDeductionAmount>0?`${money(fixedMonthlySalary)} base - ${money(leaveDeductionAmount)} leave`:`${money(fixedMonthlySalary)} monthly base`):`${workRows.length} daily entries`],[ 'Pending Advance',money(pendingAdvance),`${money(openingAdvance)} opening + ${money(advanceDuring)}`],[ 'Net Salary Payable',money(netPayable),`${money(safeRecover)} recovery + ${money(roundOffAdjustment)} round off`],[ 'Closing Advance',money(closingAdvance),'after manual recovery' ]]}/>
       {recover!==safeRecover&&<div className="salary-warning"><AlertTriangle size={16}/> Recover amount is limited to the lower of total work amount and pending advance: {money(maxRecover)}.</div>}
       {salarySaved&&<div className="salary-success"><CheckCircle2 size={16}/> Salary for {employee.name} recorded for {from} to {to}. {money(netPayable)} paid & slip added to Salary History.</div>}
       {showWorkBreakdown&&<div className="salary-breakdown">
@@ -1120,16 +1132,12 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
         </article>
       )}
     </>}
-    {wageTab==='reports'&&<><div className="report-grid">
-      <Table paged={true} title="Staff-wise salary report" copy="Gross work, advances, recovery and net payable" headers={['STAFF','WORK AMOUNT','ADVANCE','RECOVERED','NET PAYABLE']} rows={employeeSalaryRows}/>
-      <Table paged={true} title="Employee ledger report" copy="Advance given and recovered balance trail" headers={['DATE','TYPE','AMOUNT','BALANCE ADVANCE']} rows={ledgerRows}/>
-    </div>
-    <div className="report-grid">
-      <Table paged={true} title="Work-type-wise production report" copy={`${totalProduction} pieces completed by ${employee.name} between selected dates`} headers={['WORK TYPE','TOTAL QTY','RATE','AMOUNT']} rows={workTypes.map(wt=>{const rows=periodWork.filter(w=>w.workTypeId===wt.id);const qty=rows.reduce((a,b)=>a+b.quantity,0);return [`${workTypeCode(wt)} - ${wt.name}`,String(qty),money(wt.rate),money(qty*wt.rate)]})}/>
-      <Table title="Advance balance report" copy="Pending advance after selected salary recovery" headers={['EMPLOYEE','ADVANCE GIVEN','RECOVERED','PENDING']} rows={[[employee.name,money(advances.filter(a=>a.employeeId===employeeId&&a.date<=to).reduce((a,b)=>a+b.amount,0)),money(safeRecover),money(Math.max(0,advances.filter(a=>a.employeeId===employeeId&&a.date<=to).reduce((a,b)=>a+b.amount,0)-safeRecover))]]}/>
-    </div></>}
+    {wageTab==='reports'&&<div className="report-grid">
+      {wageReports.map((report,index)=><Table key={report.title} paged={report.paged} title={report.title} copy={report.copy} headers={report.headers} rows={report.rows} action={<button type="button" className="print-btn no-print" onClick={()=>setPrintReportIndex(index)}><Printer size={16}/> Print</button>}/>)}
+    </div>}
   {deleteTarget&&<div className="salary-modal-overlay" onClick={()=>setDeleteTarget(null)}><div className="salary-modal salary-delete-modal" onClick={e=>e.stopPropagation()}><h3><Trash2 size={18}/> Delete salary slip</h3><p>Deleting slip <strong>{deleteTarget.id}</strong> for <strong>{deleteTarget.from} to {deleteTarget.to}</strong> removes it permanently. Only the <strong>master</strong> user can delete salary slips.</p><div className="simple-form"><label>Username<input autoFocus value={masterAuth.username} onChange={e=>setMasterAuth({...masterAuth,username:e.target.value})} placeholder="master"/></label><label>Password<input type="password" value={masterAuth.password} onChange={e=>setMasterAuth({...masterAuth,password:e.target.value})} onKeyDown={e=>{if(e.key==='Enter')confirmMasterDelete()}} placeholder="Password"/></label></div>{masterError&&<p className="startup-error">{masterError}</p>}<div className="salary-modal-actions"><button className="outline" onClick={()=>setDeleteTarget(null)}>Cancel</button><button className="danger-btn" disabled={masterBusy||!masterAuth.username||!masterAuth.password} onClick={confirmMasterDelete}><Trash2 size={14}/> {masterBusy?'Deleting...':'Verify & delete'}</button></div></div></div>}
   {confirmRecordAgain&&<div className="salary-modal-overlay" onClick={()=>setConfirmRecordAgain(false)}><div className="salary-modal" onClick={e=>e.stopPropagation()}><h3><AlertTriangle size={18}/> Salary already recorded</h3><p>A salary slip for <strong>{employee.name}</strong> already exists for <strong>{from} to {to}</strong>. Recording again will create a duplicate slip in Salary History.</p><div className="salary-modal-actions"><button className="outline" onClick={()=>setConfirmRecordAgain(false)}>Cancel</button><button className="danger-btn" onClick={()=>{setConfirmRecordAgain(false);recordSalary()}}>Record anyway</button></div></div></div>}
+  {selectedPrintReport&&<PrintPreview onClose={()=>setPrintReportIndex(null)} doc={<div className="tax-doc wage-report-doc"><CompanyPrintHeader company={company}/><h1>{selectedPrintReport.title}</h1><div className="wage-report-meta"><span><b>Employee:</b> {employee.name}</span><span><b>Period:</b> {from} to {to}</span></div><table className="doc-table"><thead><tr>{selectedPrintReport.headers.map(header=><th key={header}>{header}</th>)}</tr></thead><tbody>{selectedPrintReport.rows.map((row,index)=><tr key={index}>{row.map((value,column)=><td key={column}>{value}</td>)}</tr>)}{!selectedPrintReport.rows.length&&<tr><td colSpan={selectedPrintReport.headers.length}>No records found</td></tr>}</tbody></table><SalaryPrintFooter/></div>}/>}
   {showSalaryPrint&&<PrintPreview doc={salaryDoc} onClose={()=>setShowSalaryPrint(false)}/>}
   {showWorkBreakdownPrint&&<PrintPreview doc={workBreakdownDoc} onClose={()=>setShowWorkBreakdownPrint(false)}/>}
   {viewHistory&&<PrintPreview doc={slipDoc(viewHistory as SalaryPayment)} onClose={()=>setViewHistory(null)}/>}

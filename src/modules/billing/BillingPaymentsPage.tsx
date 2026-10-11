@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowLeft, Eye, MessageCircle, Pencil, Plus, Printer, ReceiptText, RotateCcw, Save, Send, Trash2, Users } from 'lucide-react';
 import type { CompanySettings } from '../settings/SettingsPage';
 import type { Invoice, InvoiceItem, InvoicePayment, School, StockSale, Student } from '../../shared/types';
@@ -424,12 +424,19 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
   const [openPaymentAction,setOpenPaymentAction]=useState<string|null>(null);
   const [paymentDropdownPos,setPaymentDropdownPos]=useState<{top:number;left:number}|null>(null);
 
+  const handledInvoiceNavigation = useRef<Record<string,unknown>|null>(null);
+
   useEffect(()=>{
-    if(navParams?.tab!=='invoices')return;
+    // Refreshing invoice data must not repeat a completed delivery navigation.
+    if(!navParams || handledInvoiceNavigation.current===navParams)return;
+    if(navParams.tab!=='invoices')return;
     setTab('invoices');
-    if(!navParams?.invoiceNo)return;
+    if(!navParams.invoiceNo){handledInvoiceNavigation.current=navParams;return;}
     const invoice=invoices.find(item=>item.invoiceNo===String(navParams.invoiceNo));
-    if(invoice)setViewInvoice(invoice);
+    if(invoice){
+      handledInvoiceNavigation.current=navParams;
+      setViewInvoice(invoice);
+    }
   },[navParams,invoices]);
 
   useEffect(() => {
@@ -993,13 +1000,16 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
         (sum, inv) => sum + Math.max(0, inv.totalAmount - paidFor(inv.invoiceNo)),
         0
       );
-      const schoolAdvance = Math.max(0, schoolCollTotal - schoolBilled);
+      const schoolDiscounted = payments.filter(payment => schoolInvoices.some(invoice => invoice.invoiceNo === payment.invoiceNo)).reduce((sum, payment) => sum + Number(payment.discount || 0), 0);
+      const allSchoolDiscounted = payments.filter(payment => invoices.some(invoice => invoice.invoiceNo === payment.invoiceNo && schools.some(school => school.name === invoice.customer))).reduce((sum, payment) => sum + Number(payment.discount || 0), 0);
+      const schoolAdvance = Math.max(0, schoolCollTotal + schoolDiscounted - schoolBilled);
 
       return (
         <>
-          <Stats values={selSchool ? [
+          <Stats className="discount-summary-metrics" values={selSchool ? [
             ['Receipts', String(schoolColls.length), `for ${selSchool}`],
             ['Total Collected', money(schoolCollTotal), `for ${selSchool}`],
+            ['Discounted', money(schoolDiscounted), 'settlement discounts / waivers'],
             [
               schoolPending > 0 ? 'Pending Due' : schoolAdvance > 0 ? 'Advance Credit' : 'Balance Due',
               money(schoolPending > 0 ? schoolPending : schoolAdvance > 0 ? schoolAdvance : 0),
@@ -1009,6 +1019,7 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
           ] : [
             ['Receipts', String(schoolCollections.length), 'all school collections'],
             ['Total Collected', money(schoolTotal), 'across all schools'],
+            ['Discounted', money(allSchoolDiscounted), 'across all schools'],
             ['Selected School', 'All Schools', 'select school below'],
             ['Schools', String(schools.length), 'registered institutions']
           ]}/>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowLeft, Boxes, Camera, FileText, GraduationCap, ListPlus, Pencil, Plus, Printer, Save, ShoppingBag, Trash2, Truck, Users, X } from 'lucide-react';
 import type { CompanySettings } from '../settings/SettingsPage';
 import type { CustomerStock, Invoice, School, SchoolBarcode, SchoolStock, StockSale, Student } from '../../shared/types';
+import { COMMON_STOCK, allocateCommonStock, createReadyStockBatch, isCommonStock } from '../../shared/commonStock';
 import { InvoiceDocument } from '../billing/BillingPaymentsPage';
 import { PrintPreview, BarcodeImage, BarcodeScannerModal, Stats, Table } from '../../shared/ui';
 import { API_BASE_URL, consolidateStockSales, getStoredTenantId, money, useStoredState } from '../../shared/utils';
@@ -17,12 +18,14 @@ type StockOutTab='general'|'school'|'customer';
 type StockView='material'|'school'|'customer';
 type PartyKind='School'|'Customer';
 type PartyForm={type:PartyKind;date:string;party:string;gender:string;className:string;garment:string;size:string;count:number;remarks:string;customGarment:string;customSize:string};
+type BatchStockRow={gender:string;garment:string;size:string;count:number;customGarment:string;customSize:string};
+const emptyBatchRow=():BatchStockRow=>({gender:'Boys',garment:'Shirt',size:'',count:0,customGarment:'',customSize:''});
 type SaleForm={type:PartyKind;date:string;party:string;gender:string;garment:string;size:string;count:number;rate:number|string;remarks:string;customGarment:string;customSize:string;invoiceNo:string};
 
 const defaultItems:InventoryItem[]=[];
 const defaultStockIn:StockInRow[]=[];
 const defaultStockOut:StockOutRow[]=[];
-const defaultGarments=['Shirt','Half Pant','Full Pant','Blouse','Skirt','Track Suit','Jacket'];
+const defaultGarments=['Shirt','Half Pant','Full Pant','Blouse','Skirt','Track Suit','Jacket','Suit Pant'];
 const defaultGarmentTypes=['Shirt','Pant','Blouse','Skirt','Half Pant','Track Pant'];
 const defaultSizes=['24','26','28','30','32','34','36','38','40','42','S','M','L','XL','XXL','Free Size'];
 const today=()=>new Date().toISOString().slice(0,10);
@@ -42,6 +45,7 @@ export function InventoryPage({company,customers,schools,navParams,onNavigate}:{
   const [stockIn,setStockIn]=useStoredState<StockInRow[]>('garment-stock-in',defaultStockIn);
   const [stockOut,setStockOut]=useStoredState<StockOutRow[]>('garment-stock-out',defaultStockOut);
   const [customGarments,setCustomGarments]=useStoredState<string[]>('garment-inventory-custom-garments',[]);
+  const [customSizes,setCustomSizes]=useStoredState<string[]>('garment-inventory-custom-sizes',[]);
   const [schoolStock,setSchoolStock]=useStoredState<SchoolStock[]>('garment-school-stock',[]);
   const [customerStock,setCustomerStock]=useStoredState<CustomerStock[]>('garment-customer-stock',[]);
   const [sales,setSales]=useStoredState<StockSale[]>('garment-stock-sales',[]);
@@ -84,6 +88,12 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
   const [form,setForm]=useState({date:today(),item:items[0]?.[1]||'',subcategory:'',qty:0,vendor:'',remarks:''});
   const [itemForm,setItemForm]=useState({code:'',name:'',subcategory:'',unit:'Piece',openingQty:0});
   const [partyForm,setPartyForm]=useState<PartyForm>(emptyPartyForm());
+  const [extraStockRows,setExtraStockRows]=useState<BatchStockRow[]>([]);
+  const [stockFormError,setStockFormError]=useState('');
+  const [selectedCommonIds,setSelectedCommonIds]=useState<Set<string>>(new Set());
+  const [allocationForm,setAllocationForm]=useState<{school:string;date:string;className:string;remarks:string;rows:{sourceId:string;count:number}[]}|null>(null);
+  const [allocationError,setAllocationError]=useState('');
+  const allocationLock=useRef(false);
   const [saleForm,setSaleForm]=useState<SaleForm>(emptySaleForm());
 
   const handledNavRef=useRef<string|null>(null);
@@ -123,7 +133,7 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
         const countVal=navParams?.count ? Number(navParams.count) : 1;
         const genderVal=navParams?.gender ? String(navParams.gender) : 'Boys';
         const isKnownGarment=garments.some(g=>g.toLowerCase()===gName.toLowerCase());
-        const isKnownSize=defaultSizes.includes(sizeName);
+        const isKnownSize=allSizes.includes(sizeName);
 
         setPartyForm(f=>({
           ...f,
@@ -168,7 +178,9 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
   const [confirmStock,setConfirmStock]=useState<SchoolStock|null>(null);
   const [showPartyStock,setShowPartyStock]=useState(false);
   const [showIssueStockModal,setShowIssueStockModal]=useState(false);
-  const garments=[...defaultGarments,...customGarments];
+  const garments=Array.from(new Set([...defaultGarments,...customGarments]));
+  const allSizes=Array.from(new Set([...defaultSizes,...customSizes,...schoolStock.map(row=>row.size),...customerStock.map(row=>row.size),...sales.flatMap(sale=>sale.items?.map(item=>item.size)||[sale.size]),...[partyForm,...extraStockRows].filter(row=>row.size==='Custom').map(row=>row.customSize)].map(size=>String(size||'').trim()).filter(Boolean))).sort(sortSizes);
+  const rememberSizes=(sizes:string[])=>setCustomSizes(current=>Array.from(new Set([...current,...sizes.map(size=>size.trim()).filter(size=>size&&!defaultSizes.includes(size))])).sort(sortSizes));
 
   const normalizedItems=useMemo(()=>items.map(item=>item.length===4?[item[0],item[1],'-',item[2],item[3]] as InventoryItem:item),[items]);
   const hasOldItemRows=useMemo(()=>items.some(item=>item.length===4),[items]);
@@ -190,6 +202,8 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
   const stockRows=summaryType==='School'?schoolStock:customerStock;
   const partyField=summaryType==='School'?'school':'customer';
   const summarySchools=Array.from(new Set(stockRows.map(s=>(s as SchoolStock)[partyField as 'school']||(s as CustomerStock).customer).filter(Boolean)));
+  const hasCommonStock=schoolStock.some(isCommonStock);
+  const schoolStockNames=Array.from(new Set(schoolStock.map(row=>row.school).filter(Boolean))).sort();
   const summaryOptions=summarySchools.map(s=><option key={s} value={s}>{s}</option>);
   const schoolGarmentOptions=Array.from(new Set(schoolStock.map(s=>s.garment))).sort();
   const schoolSizeOptions=Array.from(new Set(schoolStock.map(s=>s.size))).sort(sortSizes);
@@ -226,7 +240,7 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
   };
   const summaryRows=useMemo(()=>{
     const map:Record<string,{party:string;garment:string;size:string;added:number;issued:number}>={};
-    stockRows.forEach(row=>{const party=summaryType==='School'?(row as SchoolStock).school:(row as CustomerStock).customer;if(summaryParty&&party!==summaryParty)return;if(entriesYear&&(row.date||'').slice(0,4)!==entriesYear)return;if(summaryType==='School'&&entriesGender&&(row as SchoolStock).gender!==entriesGender)return;if(entriesGarment&&row.garment!==entriesGarment)return;if(entriesSize&&row.size!==entriesSize)return;const k=`${party}||${row.garment}||${row.size}`;map[k]=map[k]||{party,garment:row.garment,size:row.size,added:0,issued:0};map[k].added+=row.count});
+    stockRows.forEach(row=>{const party=summaryType==='School'?(row as SchoolStock).school:(row as CustomerStock).customer;if(summaryParty&&(summaryParty===COMMON_STOCK?party!=='':party!==summaryParty))return;if(entriesYear&&(row.date||'').slice(0,4)!==entriesYear)return;if(summaryType==='School'&&entriesGender&&(row as SchoolStock).gender!==entriesGender)return;if(entriesGarment&&row.garment!==entriesGarment)return;if(entriesSize&&row.size!==entriesSize)return;const k=`${party}||${row.garment}||${row.size}`;map[k]=map[k]||{party,garment:row.garment,size:row.size,added:0,issued:0};map[k].added+=row.count});
     sales.filter(s=>s.type===summaryType).forEach(s=>{
       if (s.items && s.items.length > 0) {
         s.items.forEach(it => {
@@ -262,7 +276,7 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
   const consolidatedSchoolStock=useMemo(()=>{
     const map=new Map<string,SchoolStock>();
     schoolStock.forEach(s=>{
-      const key=`${s.school}||${s.gender}||${s.garment}||${s.size}`;
+      const key=isCommonStock(s)||s.allocationId?s.id:`${s.school}||${s.gender}||${s.garment}||${s.size}`;
       if(map.has(key)){
         const existing=map.get(key)!;
         map.set(key,{...existing,count:existing.count+s.count});
@@ -275,16 +289,16 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
 
   const filteredSchoolStock=useMemo(()=>consolidatedSchoolStock.filter(s=>{
     if(entriesYear&&(s.date||'').slice(0,4)!==entriesYear)return false;
-    if(entriesSchool&&s.school!==entriesSchool)return false;
+    if(entriesSchool&&(entriesSchool===COMMON_STOCK?!isCommonStock(s):s.school!==entriesSchool))return false;
     if(entriesGender&&s.gender!==entriesGender)return false;
     if(entriesGarment&&s.garment!==entriesGarment)return false;
     if(entriesSize&&s.size!==entriesSize)return false;
     return true;
   }),[consolidatedSchoolStock,entriesYear,entriesSchool,entriesGender,entriesGarment,entriesSize]);
 
-  const schoolRows=filteredSchoolStock.map(s=>[s.id,s.date||'-',s.school,s.gender,s.garment,s.size,String(s.count),s.remarks||'-']);
+  const schoolRows=filteredSchoolStock.map(s=>[s.id,s.date||'-',s.school||'Common Stock',s.gender,s.garment,s.size,String(s.count),s.remarks||'-']);
   const customerRows=customerStock.map(s=>[s.id,s.date,s.customer,s.garment,s.size,String(s.count),s.remarks||'-']);
-  const summaryLevelRows=summaryRows.map(r=>[r.party,r.garment,r.size,String(r.added),String(r.issued),String(r.available)]);
+  const summaryLevelRows=summaryRows.map(r=>[r.party||'Common Stock',r.garment,r.size,String(r.added),String(r.issued),String(r.available)]);
   const totalAvailable=summaryRows.reduce((a,r)=>a+r.available,0);
   const saleCount=(rows:StockSale[])=>rows.reduce((a,s)=>a+s.count,0);
   const saleValue=(rows:StockSale[])=>rows.reduce((a,s)=>a+s.total,0);
@@ -350,14 +364,16 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
     if(entriesSize&&s.size!==entriesSize)return false;
     return true;
   }));
-  const schoolInSchoolsCount=new Set(filteredSchoolStock.map(s=>s.school)).size;
+  const schoolInSchoolsCount=new Set(filteredSchoolStock.map(s=>s.school).filter(Boolean)).size;
+  const commonInAvailable=filteredSchoolStock.filter(isCommonStock).reduce((sum,row)=>sum+row.count,0);
   const schoolInAvailable=Math.max(0,schoolInAdded-schoolInIssued);
 
   const schoolInStats:[string,string,string][]=[
     ['Schools',String(schoolInSchoolsCount),'with ready stock'],
-    ['Pieces Added',String(schoolInAdded),'school pieces'],
+    ['Pieces Added',String(schoolInAdded),'school and common pieces'],
     ['Issued',String(schoolInIssued),'pieces sold'],
-    ['Available',String(schoolInAvailable),'ready pieces']
+    ['Available',String(schoolInAvailable),'ready pieces'],
+    ['Common Available',String(commonInAvailable),'not assigned to a school']
   ];
 
   const customerInStockList=useMemo(()=>customerStock.filter(s=>{
@@ -467,11 +483,11 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
 
   const summaryAdded=summaryRows.reduce((a,r)=>a+r.added,0);
   const summaryIssued=summaryRows.reduce((a,r)=>a+r.issued,0);
-  const summaryPartyCount=new Set(summaryRows.map(r=>r.party)).size;
+  const summaryPartyCount=new Set(summaryRows.map(r=>r.party).filter(Boolean)).size;
   const stockSummary=stockView==='material'
     ? materialStats
     : stockView==='school'
-      ? [['Schools',String(summaryPartyCount),'with ready stock'],['Pieces Added',String(summaryAdded),'school pieces'],['Issued',String(summaryIssued),'pieces sold'],['Available',String(Math.max(0,summaryAdded-summaryIssued)),'ready pieces']]
+      ? [['Schools',String(summaryPartyCount),'with ready stock'],['Pieces Added',String(summaryAdded),'school pieces'],['Issued',String(summaryIssued),'pieces sold'],['Available',String(Math.max(0,summaryAdded-summaryIssued)),'ready pieces'],['Common Available',String(summaryRows.filter(row=>!row.party).reduce((sum,row)=>sum+row.available,0)),'not assigned to a school']]
       : [['Customers',String(summaryPartyCount),'with ready stock'],['Pieces Added',String(summaryAdded),'customer pieces'],['Issued',String(summaryIssued),'pieces sold'],['Available',String(Math.max(0,summaryAdded-summaryIssued)),'ready pieces']];
 
   const activeSchools=schools.filter(s=>s.status==='Active');
@@ -481,7 +497,7 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
   const partyOptions=partyForm.type==='School'?schoolOptionList(partyForm.party):customerOptionList(partyForm.party);
   const salePartyOptions=saleForm.type==='School'?schoolOptionList(saleForm.party):customerOptionList(saleForm.party);
   const garmentOptions=garments.map(g=><option key={g} value={g}>{g}</option>);
-  const sizeOptions=defaultSizes.map(s=><option key={s} value={s}>{s}</option>);
+  const sizeOptions=allSizes.map(s=><option key={s} value={s}>{s}</option>);
 
   const availableCombos=useMemo(()=>{
     if(!saleForm.party)return [];
@@ -490,12 +506,12 @@ const [scanHistory,setScanHistory]=useState<{barcode:string;time:string}[]>([]);
     return result.sort((a,b)=>a.garment.localeCompare(b.garment)||a.size.localeCompare(b.size));
   },[saleForm.type,saleForm.party,saleForm.gender,schoolStock,customerStock,sales]);
   const saleGarments=Array.from(new Set([...availableCombos.map(c=>c.garment),...(saleForm.garment?[saleForm.garment]:[]),...garments]));
-  const saleSizes=Array.from(new Set([...availableCombos.filter(c=>!saleForm.garment||c.garment===saleForm.garment).map(c=>c.size),...(saleForm.size?[saleForm.size]:[]),...defaultSizes]));
+  const saleSizes=Array.from(new Set([...availableCombos.filter(c=>!saleForm.garment||c.garment===saleForm.garment).map(c=>c.size),...(saleForm.size?[saleForm.size]:[]),...allSizes])).sort(sortSizes);
   const selectedCombo=availableCombos.find(c=>c.garment===saleForm.garment&&c.size===saleForm.size);
   const selectedGarmentName=saleForm.garment==='Other'?saleForm.customGarment.trim():saleForm.garment;
   const selectedSizeName=saleForm.size==='Custom'?saleForm.customSize.trim():saleForm.size;
 
-  const switchInTab=(next:StockInTab)=>{setInTab(next);setEditEntry(null);setShowPartyStock(false);setShowGenerateBarcode(false);setViewBarcode(null);setEditBarcode(null);setConfirmDeleteBarcode(null);setBarcodeFilterSchool('');setBarcodeFilterYear('');if(next!=='add'&&next!=='barcode'){const type:PartyKind=next==='school'?'School':'Customer';setPartyForm(current=>({...current,type,party:type==='School'?activeSchools[0]?.name||schools[0]?.name||'':activeCustomers[0]?.[1]||customers[0]?.[1]||'',garment:defaultGarments[0],size:'',className:''}))}};
+  const switchInTab=(next:StockInTab)=>{setInTab(next);setEditEntry(null);setShowPartyStock(false);setShowGenerateBarcode(false);setViewBarcode(null);setEditBarcode(null);setConfirmDeleteBarcode(null);setBarcodeFilterSchool('');setBarcodeFilterYear('');if(next!=='add'&&next!=='barcode'){setExtraStockRows([]);setStockFormError('');const type:PartyKind=next==='school'?'School':'Customer';setPartyForm(current=>({...current,type,party:type==='School'?activeSchools[0]?.name||schools[0]?.name||'':activeCustomers[0]?.[1]||customers[0]?.[1]||'',garment:defaultGarments[0],size:'',className:''}))}};
 
 const generateSchoolBarcode=()=>{if(!barcodeForm.school){setMessage('Please select a school.');return}const nextNum=schoolBarcodes.length+1;const barcode=`TC-SCH-${String(nextNum).padStart(6,'0')}`;const newBarcode:SchoolBarcode={id:`BC-${Date.now()}`,barcode,school:barcodeForm.school,year:barcodeForm.year,shortTime:barcodeForm.shortTime,size:barcodeForm.size,garmentType:barcodeForm.garmentType,gender:barcodeForm.gender,generatedDate:today()};setSchoolBarcodes(current=>[newBarcode,...current]);setBarcodeForm({school:'',year:currentYear(),shortTime:'',size:'28',garmentType:'Shirt',gender:'Boys'});setShowGenerateBarcode(false);setMessage(`Barcode ${barcode} generated successfully.`)};
 
@@ -555,29 +571,45 @@ const saveScanStockIn=async()=>{
   const closeIssueStockModal=()=>setShowIssueStockModal(false);
 
   const addPartyStock=async()=>{
+    setStockFormError('');
+    if(partyForm.type==='School'&&!editEntry){
+      try{
+        if(partyForm.party!==COMMON_STOCK&&!schools.some(school=>school.name===partyForm.party))throw new Error('Select a school or Common Stock.');
+        const drafts=[partyForm,...extraStockRows].map(row=>({gender:row.gender,garment:row.garment==='Other'?row.customGarment.trim():row.garment,size:row.size==='Custom'?row.customSize.trim():row.size,count:Number(row.count)}));
+        const entries=createReadyStockBatch(drafts,partyForm.date,partyForm.party,partyForm.className,partyForm.remarks,`RST-${Date.now()}-${Math.random().toString(36).slice(2,7)}`);
+        setSchoolStock(current=>[...entries,...current]);
+        setCustomGarments(current=>Array.from(new Set([...current,...entries.map(entry=>entry.garment).filter(garment=>!defaultGarments.includes(garment))])));
+        rememberSizes(entries.map(entry=>entry.size));
+        closePartyStockForm();
+        setMessage(`Added ${entries.reduce((sum,entry)=>sum+entry.count,0)} pieces across ${entries.length} garment rows to ${partyForm.party===COMMON_STOCK?'Common Stock':partyForm.party}.`);
+      }catch(error){setStockFormError(error instanceof Error?error.message:'Unable to add stock.');}
+      return;
+    }
     const garment=partyForm.garment==='Other'?partyForm.customGarment.trim():partyForm.garment;
     const size=partyForm.size==='Custom'?partyForm.customSize.trim():partyForm.size;
-    if(!partyForm.party||!garment||!size||partyForm.count<=0){setMessage('Select party, garment and size, then enter a valid count.');return}
+    if(!partyForm.party||!garment||!size||!Number.isSafeInteger(partyForm.count)||(editEntry?partyForm.count<0:partyForm.count<=0)){setStockFormError('Select party, garment and size, then enter a positive whole quantity.');return}
     if(!garments.some(g=>g.toLowerCase()===garment.toLowerCase()))setCustomGarments(current=>[...current,garment]);
     if(partyForm.type==='School'){
-      const payload={school:partyForm.party,className:partyForm.className.trim()||'General',date:partyForm.date,gender:partyForm.gender,garment,size,count:Number(partyForm.count),remarks:partyForm.remarks.trim()||'-'};
-      const entry:SchoolStock={id:editEntry?.id||`RST-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,...payload};
+      const payload={school:partyForm.party===COMMON_STOCK?'':partyForm.party,className:partyForm.className.trim()||'General',date:partyForm.date,gender:partyForm.gender,garment,size,count:Number(partyForm.count),remarks:partyForm.remarks.trim()||'-'};
+      const entry:SchoolStock={...(editEntry as SchoolStock),id:editEntry?.id||`RST-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,...payload};
       setSchoolStock(current=>editEntry?current.map(s=>s.id===entry.id?entry:s):[entry,...current]);
     }else{
       const entry:CustomerStock=editEntry?{...editEntry as CustomerStock,date:partyForm.date,customer:partyForm.party,garment,size,count:Number(partyForm.count),remarks:partyForm.remarks.trim()||'-'}:{id:`CUSSTK-${Date.now()}`,date:partyForm.date,customer:partyForm.party,garment,size,count:Number(partyForm.count),remarks:partyForm.remarks.trim()||'-'};
       setCustomerStock(current=>editEntry?current.map(s=>s.id===entry.id?entry:s):[entry,...current]);
     }
+    rememberSizes([size]);
     setPartyForm(current=>({...current,count:0,remarks:'',customGarment:'',customSize:''}));
     setEditEntry(null);
     setShowPartyStock(false);
     setMessage(`${garment} (${size}) × ${partyForm.count} ${editEntry?'updated':'added'} as ${partyForm.type==='School'?'school':'customer'} ready stock.`);
   };
-  const deleteSchoolStock=(entry:SchoolStock)=>setConfirmStock(entry);
+  const deleteSchoolStock=(entry:SchoolStock)=>{if(entry.commonAllocations?.length||entry.allocationId){setMessage('Allocated stock has transfer history and cannot be deleted.');return}setConfirmStock(entry)};
   const confirmDeleteSchoolStock=()=>{if(!confirmStock)return;setSchoolStock(current=>current.filter(s=>s.id!==confirmStock.id));setMessage(`Deleted ${confirmStock.school} — ${confirmStock.garment} (${confirmStock.size}) × ${confirmStock.count} from school ready stock.`);setConfirmStock(null)};
   const deleteCustomerStock=(id:string)=>{if(window.confirm('Delete this customer ready stock entry?'))setCustomerStock(current=>current.filter(s=>s.id!==id))};
-  const startEdit=(entry:SchoolStock|CustomerStock)=>{const isSchool='school' in entry;const known=garments.some(g=>g===entry.garment);setPartyForm({type:isSchool?'School':'Customer',date:entry.date||today(),party:isSchool?entry.school:entry.customer,gender:isSchool?entry.gender:'Boys',className:isSchool?entry.className||'':'',garment:known?entry.garment:'Other',size:defaultSizes.includes(entry.size)?entry.size:'Custom',count:entry.count,remarks:entry.remarks&&entry.remarks!=='-'?entry.remarks:'',customGarment:known?'':entry.garment,customSize:defaultSizes.includes(entry.size)?'':entry.size});setEditEntry(entry);setShowPartyStock(true)};
+  const startEdit=(entry:SchoolStock|CustomerStock)=>{setExtraStockRows([]);setStockFormError('');const isSchool='school' in entry;const known=garments.some(g=>g===entry.garment);setPartyForm({type:isSchool?'School':'Customer',date:entry.date||today(),party:isSchool?(entry.school||COMMON_STOCK):entry.customer,gender:isSchool?entry.gender:'Boys',className:isSchool?entry.className||'':'',garment:known?entry.garment:'Other',size:allSizes.includes(entry.size)?entry.size:'Custom',count:entry.count,remarks:entry.remarks&&entry.remarks!=='-'?entry.remarks:'',customGarment:known?'':entry.garment,customSize:allSizes.includes(entry.size)?'':entry.size});setEditEntry(entry);setShowPartyStock(true)};
   const addSale=async()=>{
     const garment=selectedGarmentName,size=selectedSizeName;
+    if(saleForm.type==='School'&&(!schools.some(school=>school.name===saleForm.party)||saleForm.party===COMMON_STOCK)){setMessage('Allocate common stock to a school before issuing it.');return}
     if(!saleForm.party||!garment||!size||saleForm.count<=0){setMessage('Select party, garment, size and enter a valid count.');return}
     const available=availableQty(saleForm.type,saleForm.party,garment,size);
     if(saleForm.count>available){setMessage(`Only ${available} piece${available===1?'':'s'} available for ${garment} (${size}).`);return}
@@ -628,25 +660,60 @@ const saveScanStockIn=async()=>{
     }
   };
 
-  const openAddPartyStock=()=>{setEditEntry(null);setPartyForm(emptyPartyForm());setShowPartyStock(true)};
-  const closePartyStockForm=()=>{setShowPartyStock(false);setEditEntry(null);setPartyForm(emptyPartyForm())};
+  const openAllocation=(ids:string[])=>{
+    const rows=schoolStock.filter(row=>ids.includes(row.id)&&isCommonStock(row)&&row.count>0).map(row=>({sourceId:row.id,count:row.count}));
+    if(!rows.length){setMessage('Select common stock with available pieces.');return}
+    allocationLock.current=false;setAllocationError('');setAllocationForm({school:'',date:today(),className:'General',remarks:'',rows});setOpenStockAction(null);setStockDropdownPos(null);
+  };
+  const saveAllocation=()=>{
+    if(!allocationForm||allocationLock.current)return;
+    allocationLock.current=true;
+    try{
+      if(!schools.some(school=>school.name===allocationForm.school&&school.status==='Active'))throw new Error('Select an active school.');
+      const batchId=`ALLOC-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+      allocateCommonStock(schoolStock,allocationForm.rows,allocationForm,batchId);
+      setSchoolStock(current=>allocateCommonStock(current,allocationForm.rows,allocationForm,batchId));
+      setMessage(`Allocated ${allocationForm.rows.reduce((sum,row)=>sum+row.count,0)} pieces to ${allocationForm.school}.`);
+      setAllocationForm(null);setSelectedCommonIds(new Set());
+    }catch(error){allocationLock.current=false;setAllocationError(error instanceof Error?error.message:'Unable to allocate stock.');}
+  };
+  const allocationHistoryRows=schoolStock.flatMap(source=>(source.commonAllocations||[]).map(allocation=>({...allocation,sourceId:source.id}))).filter(row=>(!entriesYear||row.date.startsWith(entriesYear))&&(!entriesSchool||entriesSchool===COMMON_STOCK||row.school===entriesSchool)&&(!entriesGender||row.gender===entriesGender)&&(!entriesGarment||row.garment===entriesGarment)&&(!entriesSize||row.size===entriesSize)).map(row=>[row.id,row.date,row.school,row.className,row.gender,row.garment,row.size,String(row.count),row.sourceId,row.remarks]);
+  const batchRows=[partyForm,...extraStockRows];
+  const updateBatchRow=(index:number,changes:Partial<BatchStockRow>)=>{if(index===0)setPartyForm(current=>({...current,...changes}));else setExtraStockRows(current=>current.map((row,i)=>i===index-1?{...row,...changes}:row));};
+  const removeBatchRow=(index:number)=>{if(index===0&&extraStockRows.length){setPartyForm(current=>({...current,...extraStockRows[0]}));setExtraStockRows(current=>current.slice(1));}else if(index>0)setExtraStockRows(current=>current.filter((_,i)=>i!==index-1));};
+  const openAddPartyStock=()=>{setEditEntry(null);setExtraStockRows([]);setStockFormError('');setPartyForm({...emptyPartyForm(),type:inTab==='customer'?'Customer':'School',party:navParams?.fromSchool?String(navParams.fromSchool):''});setShowPartyStock(true)};
+  const closePartyStockForm=()=>{setShowPartyStock(false);setEditEntry(null);setPartyForm(emptyPartyForm());setExtraStockRows([]);setStockFormError('')};
 
-  const partyStockModal=showPartyStock ? (<div className="stock-modal-overlay" onClick={closePartyStockForm}><article className="card measurement-form entry-modal" onClick={e=>e.stopPropagation()}>
-    <div className="form-title"><div><h2>{editEntry?'Edit ':'Add '}{partyForm.type==='School'?'ready stock for school':'ready stock for customer'}</h2><p>{editEntry?'Update the ready pieces and save the changes.':(partyForm.type==='School'?'Record school-wise ready pieces by gender, garment and size.':'Record customer-wise ready pieces by garment and size.')}</p></div><span className="batch-no">{partyForm.type==='School'?schoolStock.length:customerStock.length} ENTRIES</span></div>
+  const partyStockModal=showPartyStock ? (<div className="stock-modal-overlay" onClick={closePartyStockForm}><article className="card measurement-form entry-modal ready-stock-batch-modal" onClick={e=>e.stopPropagation()}>
+    <div className="form-title"><div><h2>{editEntry?'Edit ready stock':'Add ready stock'}</h2><p>{partyForm.type==='School'?'Choose Common Stock or a school, then add garments by gender and size.':'Record customer ready pieces by garment and size.'}</p></div></div>
     <div className="form-grid">
       <label>Date<input type="date" value={partyForm.date} onChange={e=>setPartyForm({...partyForm,date:e.target.value})}/></label>
-      <label>{partyForm.type==='School'?'School name':'Customer'}<select value={partyForm.party} onChange={e=>setPartyForm({...partyForm,party:e.target.value})}><option value="">Select {partyForm.type==='School'?'school':'customer'}</option>{partyOptions}</select></label>
-      {partyForm.type==='School'&&<label>Gender<select value={partyForm.gender} onChange={e=>setPartyForm({...partyForm,gender:e.target.value})}><option>Boys</option><option>Girls</option></select></label>}
-      {partyForm.type==='School'&&<label>Class<select value={partyForm.className} onChange={e=>setPartyForm({...partyForm,className:e.target.value})}><option value="">General</option>{['Nursery','LKG','UKG','1','2','3','4','5','6','7','8','9','10','11','12'].map(x=><option key={x}>{x}</option>)}</select></label>}
-      <label>Garment<select value={partyForm.garment} onChange={e=>setPartyForm({...partyForm,garment:e.target.value,customGarment:''})}><option value="">Select garment</option>{garmentOptions}<option value="Other">Other...</option></select></label>
-      <label>Size<select value={partyForm.size} onChange={e=>setPartyForm({...partyForm,size:e.target.value,customSize:''})}><option value="">Select size</option>{sizeOptions}<option value="Custom">Custom...</option></select></label>
-      <label>Count<input type="number" min="0" value={partyForm.count} onChange={e=>setPartyForm({...partyForm,count:Number(e.target.value)})}/></label>
-      {partyForm.garment==='Other'&&<label>New garment name<input value={partyForm.customGarment} onChange={e=>setPartyForm({...partyForm,customGarment:e.target.value})} placeholder="Enter garment name"/></label>}
-      {partyForm.size==='Custom'&&<label>New size<input value={partyForm.customSize} onChange={e=>setPartyForm({...partyForm,customSize:e.target.value})} placeholder="Enter size"/></label>}
-      <label>Optional / Remarks<input value={partyForm.remarks} onChange={e=>setPartyForm({...partyForm,remarks:e.target.value})} placeholder="Optional notes"/></label>
+      <label>{partyForm.type==='School'?'School / Common Stock':'Customer'}<select disabled={Boolean(editEntry&&('school' in editEntry))} value={partyForm.party} onChange={e=>setPartyForm({...partyForm,party:e.target.value})}><option value="">Select {partyForm.type==='School'?'school or Common Stock':'customer'}</option>{partyForm.type==='School'&&<option value={COMMON_STOCK}>Common Stock (Not assigned to a school)</option>}{partyOptions}</select></label>
+      {partyForm.type==='School'&&<label>Class<select disabled={partyForm.party===COMMON_STOCK} value={partyForm.party===COMMON_STOCK?'':partyForm.className} onChange={e=>setPartyForm({...partyForm,className:e.target.value})}><option value="">General</option>{['Nursery','LKG','UKG','1','2','3','4','5','6','7','8','9','10','11','12'].map(x=><option key={x}>{x}</option>)}</select></label>}
+      <label>Remarks<input value={partyForm.remarks} onChange={e=>setPartyForm({...partyForm,remarks:e.target.value})} placeholder="Colour, style or optional notes"/></label>
     </div>
-    <div className="form-actions"><button className="outline" onClick={closePartyStockForm}>Cancel</button><button className="primary" onClick={addPartyStock}>{editEntry?<Save size={16}/>:<Plus size={16}/>} {editEntry?'Save changes':'Add stock'}</button></div>
+    <div className="ready-stock-batch-rows">
+      {(partyForm.type==='School'&&!editEntry?batchRows:[partyForm]).map((row,index)=><div className="ready-stock-batch-row" key={index}>
+        <span className="ready-stock-row-number">{index+1}</span>
+        {partyForm.type==='School'&&<label>Gender<select value={row.gender} onChange={e=>updateBatchRow(index,{gender:e.target.value})}><option>Boys</option><option>Girls</option></select></label>}
+        <label>Garment<select value={row.garment} onChange={e=>updateBatchRow(index,{garment:e.target.value,customGarment:''})}><option value="">Select garment</option>{garmentOptions}<option value="Other">Other...</option></select>{row.garment==='Other'&&<input aria-label={`Row ${index+1} custom garment`} value={row.customGarment} onChange={e=>updateBatchRow(index,{customGarment:e.target.value})} placeholder="Garment name"/>}</label>
+        <label>Size<select value={row.size} onChange={e=>updateBatchRow(index,{size:e.target.value,customSize:''})}><option value="">Select size</option>{sizeOptions}<option value="Custom">Custom...</option></select>{row.size==='Custom'&&<input aria-label={`Row ${index+1} custom size`} value={row.customSize} onChange={e=>updateBatchRow(index,{customSize:e.target.value})} placeholder="Size"/>}</label>
+        <label>Quantity<input type="number" min="1" step="1" value={row.count||''} onChange={e=>updateBatchRow(index,{count:Number(e.target.value)})}/></label>
+        {partyForm.type==='School'&&!editEntry&&<button className="outline mini-action danger" disabled={batchRows.length===1} aria-label={`Remove garment row ${index+1}`} onClick={()=>removeBatchRow(index)}><Trash2 size={16}/></button>}
+      </div>)}
+    </div>
+    {partyForm.type==='School'&&!editEntry&&<div className="ready-stock-batch-footer"><button className="outline" onClick={()=>setExtraStockRows(current=>[...current,emptyBatchRow()])}><Plus size={16}/> Add Row</button><span>{batchRows.length} rows / {batchRows.reduce((sum,row)=>sum+(Number(row.count)||0),0)} pieces</span></div>}
+    {stockFormError&&<p role="alert" className="stock-form-error">{stockFormError}</p>}
+    <div className="form-actions"><button className="outline" onClick={closePartyStockForm}>Cancel</button><button className="primary" onClick={addPartyStock}><Save size={16}/> {editEntry?'Save changes':partyForm.type==='School'?'Save All':'Add stock'}</button></div>
   </article></div>) : null;
+
+  const allocationModal=allocationForm&&<div className="stock-modal-overlay" onClick={()=>setAllocationForm(null)}><article className="card measurement-form entry-modal ready-stock-batch-modal" onClick={e=>e.stopPropagation()}>
+    <div className="form-title"><div><h2>Allocate Common Stock to School</h2><p>Transfer all or part of the selected stock. Remaining pieces stay in Common Stock.</p></div></div>
+    <div className="form-grid"><label>School<select value={allocationForm.school} onChange={e=>setAllocationForm({...allocationForm,school:e.target.value})}><option value="">Select school</option>{activeSchools.map(school=><option key={school.id} value={school.name}>{school.name}</option>)}</select></label><label>Allocation date<input type="date" value={allocationForm.date} onChange={e=>setAllocationForm({...allocationForm,date:e.target.value})}/></label><label>Class<select value={allocationForm.className} onChange={e=>setAllocationForm({...allocationForm,className:e.target.value})}>{['General','Nursery','LKG','UKG','1','2','3','4','5','6','7','8','9','10','11','12'].map(value=><option key={value}>{value}</option>)}</select></label><label>Remarks<input value={allocationForm.remarks} onChange={e=>setAllocationForm({...allocationForm,remarks:e.target.value})}/></label></div>
+    <div className="ready-stock-allocation-rows">{allocationForm.rows.map((request,index)=>{const source=schoolStock.find(row=>row.id===request.sourceId);return <div className="ready-stock-allocation-row" key={request.sourceId}><div><strong>{source?.garment} / {source?.gender} / Size {source?.size}</strong><span>{source?.count||0} available; {Math.max(0,(source?.count||0)-request.count)} remain common</span></div><label>Allocate quantity<input type="number" min="1" step="1" max={source?.count||0} value={request.count||''} onChange={e=>setAllocationForm({...allocationForm,rows:allocationForm.rows.map((row,i)=>i===index?{...row,count:Number(e.target.value)}:row)})}/></label></div>})}</div>
+    {allocationError&&<p role="alert" className="stock-form-error">{allocationError}</p>}
+    <div className="form-actions"><button className="outline" onClick={()=>setAllocationForm(null)}>Cancel</button><button className="primary" onClick={saveAllocation}><GraduationCap size={16}/> Allocate to School</button></div>
+  </article></div>;
 
   const handleSaleBarcodeScan=(code:string)=>{
     const bc=schoolBarcodes.find(b=>b.barcode===code);
@@ -696,7 +763,7 @@ const saveScanStockIn=async()=>{
     </div>
     {tab==='stock'&&<div className="inventory-view-panel"><div className="inventory-line-tabs" role="tablist" aria-label="Current stock views"><button className={stockView==='material'?'active':''} onClick={()=>switchStockView('material')}>Material Stock</button><button className={stockView==='school'?'active':''} onClick={()=>switchStockView('school')}>School Stock</button><button className={stockView==='customer'?'active':''} onClick={()=>switchStockView('customer')}>Customer Stock</button></div><div className="inventory-tab-content">
       {stockView==='material'&&<><div className="filterbar ready-stock-filter"><label>Subcategory<select value={materialSubcategory} onChange={e=>setMaterialSubcategory(e.target.value)}><option value="">All subcategories</option>{materialSubcategoryOptions.map(sc=><option key={sc} value={sc}>{sc}</option>)}</select></label><label>Search item<input value={materialSearch} onChange={e=>setMaterialSearch(e.target.value)} placeholder="Search code or name..."/></label></div><Stats values={materialStats}/><Table title="Current stock" copy="Material balance view" headers={['ITEM CODE','ITEM','SUBCATEGORY','UNIT','AVAILABLE QTY']} rows={filteredMaterialItems} paged/></>}
-      {stockView==='school'&&<><div className="filterbar ready-stock-filter"><label>Year<select value={entriesYear} onChange={e=>setEntriesYear(e.target.value)}><option value="">All years</option>{schoolYears.map(y=><option key={y}>{y}</option>)}</select></label><label>School name<select value={summaryParty} onChange={e=>setSummaryParty(e.target.value)}><option value="">All schools</option>{summaryOptions}</select></label><label>Gender<select value={entriesGender} onChange={e=>setEntriesGender(e.target.value)}><option value="">All</option><option>Boys</option><option>Girls</option></select></label><label>Garment<select value={entriesGarment} onChange={e=>setEntriesGarment(e.target.value)}><option value="">All garments</option>{schoolGarmentOptions.map(g=><option key={g}>{g}</option>)}</select></label><label>Size<select value={entriesSize} onChange={e=>setEntriesSize(e.target.value)}><option value="">All sizes</option>{schoolSizeOptions.map(s=><option key={s}>{s}</option>)}</select></label></div><Stats values={stockSummary}/><Table title="School stock" copy="Added, issued and available pieces combined by school, garment and size" headers={['SCHOOL','GARMENT','SIZE','ADDED','ISSUED','AVAILABLE']} rows={summaryLevelRows} paged total={`Total available: ${totalAvailable} pcs`}/></>}
+      {stockView==='school'&&<><div className="filterbar ready-stock-filter"><label>Year<select value={entriesYear} onChange={e=>setEntriesYear(e.target.value)}><option value="">All years</option>{schoolYears.map(y=><option key={y}>{y}</option>)}</select></label><label>School name<select value={summaryParty} onChange={e=>setSummaryParty(e.target.value)}><option value="">All schools / common stock</option>{hasCommonStock&&<option value={COMMON_STOCK}>Common Stock</option>}{summaryOptions}</select></label><label>Gender<select value={entriesGender} onChange={e=>setEntriesGender(e.target.value)}><option value="">All</option><option>Boys</option><option>Girls</option></select></label><label>Garment<select value={entriesGarment} onChange={e=>setEntriesGarment(e.target.value)}><option value="">All garments</option>{schoolGarmentOptions.map(g=><option key={g}>{g}</option>)}</select></label><label>Size<select value={entriesSize} onChange={e=>setEntriesSize(e.target.value)}><option value="">All sizes</option>{schoolSizeOptions.map(s=><option key={s}>{s}</option>)}</select></label></div><Stats className={stockView==='school'?'discount-summary-metrics':undefined} values={stockSummary}/><Table title="School stock" copy="Added, issued and available pieces combined by school, garment and size" headers={['SCHOOL','GARMENT','SIZE','ADDED','ISSUED','AVAILABLE']} rows={summaryLevelRows} paged total={`Total available: ${totalAvailable} pcs`}/></>}
       {stockView==='customer'&&<><div className="filterbar ready-stock-filter"><label>Year<select value={entriesYear} onChange={e=>setEntriesYear(e.target.value)}><option value="">All years</option>{customerYears.map(y=><option key={y}>{y}</option>)}</select></label><label>Customer<select value={summaryParty} onChange={e=>setSummaryParty(e.target.value)}><option value="">All customers</option>{summaryOptions}</select></label><label>Garment<select value={entriesGarment} onChange={e=>setEntriesGarment(e.target.value)}><option value="">All garments</option>{customerGarmentOptions.map(g=><option key={g}>{g}</option>)}</select></label><label>Size<select value={entriesSize} onChange={e=>setEntriesSize(e.target.value)}><option value="">All sizes</option>{customerSizeOptions.map(s=><option key={s}>{s}</option>)}</select></label></div><Stats values={stockSummary}/><Table title="Customer stock" copy="Added, issued and available pieces combined by customer, garment and size" headers={['CUSTOMER','GARMENT','SIZE','ADDED','ISSUED','AVAILABLE']} rows={summaryLevelRows} paged total={`Total available: ${totalAvailable} pcs`}/></>}
     </div></div>}
     {tab==='in'&&<div className="inventory-view-panel">
@@ -711,19 +778,20 @@ const saveScanStockIn=async()=>{
       {inTab==='school'&&<>
       <div className="filterbar ready-stock-filter">
         <label>Year<select value={entriesYear} onChange={e=>setEntriesYear(e.target.value)}><option value="">All years</option>{schoolYears.map(y=><option key={y}>{y}</option>)}</select></label>
-        <label>School<select value={entriesSchool} onChange={e=>setEntriesSchool(e.target.value)}><option value="">All schools</option>{summarySchools.map(s=><option key={s}>{s}</option>)}</select></label>
+        <label>School<select value={entriesSchool} onChange={e=>setEntriesSchool(e.target.value)}><option value="">All schools / common stock</option>{hasCommonStock&&<option value={COMMON_STOCK}>Common Stock</option>}{schoolStockNames.map(s=><option key={s}>{s}</option>)}</select></label>
         <label>Gender<select value={entriesGender} onChange={e=>setEntriesGender(e.target.value)}><option value="">All</option><option>Boys</option><option>Girls</option></select></label>
         <label>Garment<select value={entriesGarment} onChange={e=>setEntriesGarment(e.target.value)}><option value="">All garments</option>{schoolGarmentOptions.map(g=><option key={g}>{g}</option>)}</select></label>
         <label>Size<select value={entriesSize} onChange={e=>setEntriesSize(e.target.value)}><option value="">All sizes</option>{schoolSizeOptions.map(s=><option key={s}>{s}</option>)}</select></label>
       </div>
-      <Stats values={schoolInStats}/>
-      <Table title="School ready stock entries" copy="Date, school, gender, garment, size and count records" headers={['ID','DATE','SCHOOL','GENDER','GARMENT','SIZE','COUNT','REMARKS']} rows={schoolRows} paged action={<div style={{display:'flex',gap:8}}><button className="outline" onClick={()=>setShowScanStockInModal(true)}><Camera size={15}/> Scan Barcode {totalScanCount>0?`(${totalScanCount})`:''}</button><button className="primary" onClick={openAddPartyStock}><Plus size={15}/> Add Ready stock</button></div>} actions={row=>{const entry=consolidatedSchoolStock.find(s=>s.id===row[0]);if(!entry)return null;return <div className="dropdown-action-cell"><button className="outline mini-action dropdown-trigger" onClick={e=>{e.stopPropagation();const rect=(e.currentTarget as HTMLElement).getBoundingClientRect();const pos={top:rect.bottom+4,left:Math.max(8,rect.right-160)};setStockDropdownPos(openStockAction===entry.id?null:pos);setOpenStockAction(openStockAction===entry.id?null:entry.id)}}>Actions <span className="dropdown-arrow"/></button>{openStockAction===entry.id&&stockDropdownPos&&<div className="dropdown-menu" style={{top:stockDropdownPos.top,left:stockDropdownPos.left}}><button className="dropdown-item" onClick={()=>{setOpenStockAction(null);setStockDropdownPos(null);setViewStockEntry(entry)}}><FileText size={14}/> Details</button><button className="dropdown-item" onClick={()=>{setOpenStockAction(null);setStockDropdownPos(null);startEdit(entry)}}><Pencil size={14}/> Edit</button><button className="dropdown-item danger" onClick={()=>{setOpenStockAction(null);setStockDropdownPos(null);deleteSchoolStock(entry)}}><Trash2 size={14}/> Delete</button></div>}</div>}}/>
+      <Stats className="discount-summary-metrics" values={schoolInStats}/>
+      <Table title="School & common ready stock entries" copy="Add common stock first, then allocate pieces to a school when needed" headers={['ID','DATE','SCHOOL','GENDER','GARMENT','SIZE','COUNT','REMARKS']} rows={schoolRows} paged action={<div className="ready-stock-actions">{selectedCommonIds.size>0&&<button className="primary" onClick={()=>openAllocation([...selectedCommonIds])}>Allocate Selected ({selectedCommonIds.size})</button>}<button className="outline" onClick={()=>setShowScanStockInModal(true)}><Camera size={15}/> Scan Barcode {totalScanCount>0?`(${totalScanCount})`:''}</button><button className="primary" onClick={openAddPartyStock}><Plus size={15}/> Add Ready stock</button></div>} actions={row=>{const entry=consolidatedSchoolStock.find(s=>s.id===row[0]);if(!entry)return null;return <div className="dropdown-action-cell ready-stock-row-actions">{isCommonStock(entry)&&entry.count>0&&<input type="checkbox" aria-label={`Select ${entry.garment} size ${entry.size} for allocation`} checked={selectedCommonIds.has(entry.id)} onChange={e=>setSelectedCommonIds(current=>{const next=new Set(current);if(e.target.checked)next.add(entry.id);else next.delete(entry.id);return next})}/>}<button className="outline mini-action dropdown-trigger" onClick={e=>{e.stopPropagation();const rect=(e.currentTarget as HTMLElement).getBoundingClientRect();const pos={top:rect.bottom+4,left:Math.max(8,rect.right-160)};setStockDropdownPos(openStockAction===entry.id?null:pos);setOpenStockAction(openStockAction===entry.id?null:entry.id)}}>Actions <span className="dropdown-arrow"/></button>{openStockAction===entry.id&&stockDropdownPos&&<div className="dropdown-menu" style={{top:stockDropdownPos.top,left:stockDropdownPos.left}}><button className="dropdown-item" onClick={()=>{setOpenStockAction(null);setStockDropdownPos(null);setViewStockEntry(entry)}}><FileText size={14}/> Details</button>{isCommonStock(entry)&&entry.count>0&&<button className="dropdown-item" onClick={()=>openAllocation([entry.id])}><GraduationCap size={14}/> Allocate to School</button>}{!entry.allocationId&&<button className="dropdown-item" onClick={()=>{setOpenStockAction(null);setStockDropdownPos(null);startEdit(entry)}}><Pencil size={14}/> Edit</button>}{!entry.allocationId&&!entry.commonAllocations?.length&&<button className="dropdown-item danger" onClick={()=>{setOpenStockAction(null);setStockDropdownPos(null);deleteSchoolStock(entry)}}><Trash2 size={14}/> Delete</button>}</div>}</div>}}/>
+      {allocationHistoryRows.length>0&&<Table title="Common stock allocation history" copy="Transfers to schools; allocation does not create a sale or invoice" headers={['TRANSFER','DATE','SCHOOL','CLASS','GENDER','GARMENT','SIZE','QUANTITY','SOURCE','REMARKS']} rows={allocationHistoryRows} paged/>}
       {showScanStockInModal&&<div className="stock-modal-overlay" onClick={()=>setShowScanStockInModal(false)}><article className="card measurement-form entry-modal barcode-scanner-modal" style={{maxWidth:'860px'}} onClick={e=>e.stopPropagation()}><div className="form-title"><div><h2><Camera size={18}/> Scan Barcode — Stock In</h2><p>Each scan adds +1 piece. Point USB scanner or mobile camera to scan tags.</p></div><button className="outline mini-action" onClick={()=>setShowScanStockInModal(false)}><X size={16}/></button></div><div className="scanner-body" style={{marginTop:'12px'}}><div className="barcode-scan-actions-row"><button className="primary" onClick={()=>{setScanForSale(false);setShowBarcodeScanner(true)}}><Camera size={16}/> Open Camera Scanner</button>{totalScanCount>0&&<span className="scan-total-badge">{totalScanCount} scans queued</span>}</div>{totalScanCount>0&&<div className="scan-summary"><div className="scan-summary-header"><h3>Scan Summary</h3><div className="scan-summary-actions"><button className="outline mini-action" onClick={clearAllScans}><Trash2 size={14}/> Clear All</button><button className="primary" onClick={async()=>{await saveScanStockIn();setShowScanStockInModal(false)}}><Save size={14}/> Save Stock In ({totalScanCount} pcs)</button></div></div><table><thead><tr><th>SCHOOL</th><th>GENDER</th><th>GARMENT</th><th>SIZE</th><th>BARCODE</th><th>STOCK IN</th><th></th></tr></thead><tbody>{scanSummary.map(r=><tr key={r.barcode}><td><strong>{r.school}</strong></td><td>{r.gender}</td><td>{r.garment}</td><td>{r.size}</td><td><div className="barcode-cell"><BarcodeImage value={r.barcode} width={1} height={22} fontSize={9} displayValue={true}/></div></td><td><strong className="scan-count-cell">{r.count}</strong></td><td><button className="outline mini-action danger" onClick={()=>removeScanCount(r.barcode)}><Trash2 size={13}/></button></td></tr>)}<tr className="scan-total-row"><td colSpan={5}><strong>TOTAL</strong></td><td colSpan={2}><strong>{totalScanCount} pieces</strong></td></tr></tbody></table></div>}{scanHistory.length>0&&<div className="scan-history"><h4>Recent Scans</h4><div className="scan-history-list">{scanHistory.slice(0,20).map((s,i)=><div key={i} className="scan-history-item"><span className="scan-history-barcode">{s.barcode}</span><span className="scan-history-time">{s.time}</span></div>)}</div></div>}<div className="form-actions" style={{marginTop:'16px'}}><button className="outline" onClick={()=>setShowScanStockInModal(false)}>Close</button>{totalScanCount>0&&<button className="primary" onClick={async()=>{await saveScanStockIn();setShowScanStockInModal(false)}}><Save size={16}/> Save Stock In ({totalScanCount} pcs)</button>}</div></div></article></div>}</>}
       {inTab==='customer'&&<><div className="filterbar ready-stock-filter"><label>Year<select value={entriesYear} onChange={e=>setEntriesYear(e.target.value)}><option value="">All years</option>{customerYears.map(y=><option key={y}>{y}</option>)}</select></label><label>Customer<select value={summaryParty} onChange={e=>setSummaryParty(e.target.value)}><option value="">All customers</option>{summaryOptions}</select></label><label>Garment<select value={entriesGarment} onChange={e=>setEntriesGarment(e.target.value)}><option value="">All garments</option>{customerGarmentOptions.map(g=><option key={g}>{g}</option>)}</select></label><label>Size<select value={entriesSize} onChange={e=>setEntriesSize(e.target.value)}><option value="">All sizes</option>{customerSizeOptions.map(s=><option key={s}>{s}</option>)}</select></label></div><Stats values={customerInStats}/><Table title="Customer ready stock entries" copy="Date, customer, garment, size and count records" headers={['ID','DATE','CUSTOMER','GARMENT','SIZE','COUNT','REMARKS']} rows={customerRows} paged action={<button className="primary" onClick={openAddPartyStock}><Plus size={15}/> Add Ready stock</button>} actions={row=>{const entry=customerStock.find(s=>s.id===row[0]);return entry?<div className="table-actions"><button className="outline mini-action" onClick={()=>startEdit(entry)}><Pencil size={14}/></button><button className="outline mini-action danger" onClick={()=>deleteCustomerStock(entry.id)}><Trash2 size={14}/></button></div>:null}}/></>}
       {inTab==='barcode'&&<><div className="filterbar ready-stock-filter"><label>Year<select value={barcodeFilterYear} onChange={e=>{setBarcodeFilterYear(e.target.value);setOpenBarcodeAction(null)}}><option value="">All years</option>{Array.from(new Set(schoolBarcodes.map(b=>b.year).filter(Boolean))).sort().reverse().map(y=><option key={y} value={y}>{y}</option>)}</select></label><label>School<select value={barcodeFilterSchool} onChange={e=>{setBarcodeFilterSchool(e.target.value);setOpenBarcodeAction(null)}}><option value="">All schools</option>{Array.from(new Set(schoolBarcodes.map(b=>b.school))).sort().map(s=><option key={s} value={s}>{s}</option>)}</select></label></div><article className="card jobs module-table"><div className="cardhead"><div><h2>School Barcode List</h2><p>Generated barcodes for school ready stock</p></div><div className="cardhead-actions">{selectedBarcodes.size>0&&<button className="outline" onClick={()=>handlePrintBarcodes(filteredBarcodes.filter(b=>selectedBarcodes.has(b.id)))}><Printer size={15}/> Print Selected ({selectedBarcodes.size})</button>}{filteredBarcodes.length>0&&<button className="outline" onClick={()=>handlePrintBarcodes(filteredBarcodes)}><Printer size={15}/> Print All ({filteredBarcodes.length})</button>}<button className="primary" onClick={()=>{setEditBarcode(null);setBarcodeForm({school:'',year:currentYear(),shortTime:'',size:'28',garmentType:'Shirt',gender:'Boys'});setShowGenerateBarcode(true)}}><Plus size={15}/> Generate Barcode</button></div></div><table><thead><tr><th style={{width:40}}><input type="checkbox" checked={selectedBarcodes.size===filteredBarcodes.length&&filteredBarcodes.length>0} onChange={toggleAllBarcodes}/></th><th>YEAR</th><th>SCHOOL</th><th>SHORT TIME</th><th>DATE</th><th>GENDER</th><th>GARMENT</th><th>SIZE</th><th>BARCODE</th><th>ACTIONS</th></tr></thead><tbody>{filteredBarcodes.map(b=><tr key={b.id}><td><input type="checkbox" checked={selectedBarcodes.has(b.id)} onChange={()=>toggleBarcodeSelect(b.id)}/></td><td>{b.year||'-'}</td><td><strong>{b.school}</strong></td><td>{b.shortTime||'-'}</td><td>{b.generatedDate}</td><td>{b.gender}</td><td>{b.garmentType}</td><td>{b.size}</td><td><div className="barcode-cell"><BarcodeImage value={b.barcode} width={1.2} height={28} fontSize={10}/></div></td><td><div className="dropdown-action-cell"><button className="outline mini-action dropdown-trigger" onClick={e=>{e.stopPropagation();const rect=(e.currentTarget as HTMLElement).getBoundingClientRect();const pos={top:rect.bottom+4,left:Math.max(8,rect.right-160)};setDropdownPos(openBarcodeAction===b.id?null:pos);setOpenBarcodeAction(openBarcodeAction===b.id?null:b.id)}}>Actions <span className="dropdown-arrow"/></button>{openBarcodeAction===b.id&&dropdownPos&&<div className="dropdown-menu" style={{top:stockDropdownPos?.top||dropdownPos.top,left:stockDropdownPos?.left||dropdownPos.left}}><button className="dropdown-item" onClick={()=>{setOpenBarcodeAction(null);setDropdownPos(null);setViewBarcode(b)}}><FileText size={14}/> Details</button><button className="dropdown-item" onClick={()=>{setOpenBarcodeAction(null);setDropdownPos(null);startEditBarcode(b)}}><Pencil size={14}/> Edit</button><button className="dropdown-item danger" onClick={()=>{setOpenBarcodeAction(null);setDropdownPos(null);setConfirmDeleteBarcode(b)}}><Trash2 size={14}/> Delete</button></div>}</div></td></tr>)}</tbody></table>{!filteredBarcodes.length&&<div className="empty-row">No barcodes found</div>}</article></>}
-      {showGenerateBarcode&&<div className="stock-modal-overlay" onClick={()=>{setShowGenerateBarcode(false);setEditBarcode(null)}}><article className="card measurement-form entry-modal" onClick={e=>e.stopPropagation()}><div className="form-title"><div><h2>{editBarcode?'Edit School Barcode':'Generate School Barcode'}</h2><p>{editBarcode?`Update barcode ${editBarcode.barcode}`:'Create a new barcode for school ready stock tracking.'}</p></div></div><div className="form-grid"><label>Year<select value={barcodeForm.year} onChange={e=>setBarcodeForm({...barcodeForm,year:e.target.value})}>{['2025-26','2026-27','2027-28','2028-29','2029-30'].map(y=><option key={y} value={y}>{y}</option>)}</select></label><label>School<select value={barcodeForm.school} onChange={e=>setBarcodeForm({...barcodeForm,school:e.target.value})}><option value="">Select school</option>{activeSchools.map(s=><option key={s.id} value={s.name}>{s.name}</option>)}</select></label><label>Short Time<input value={barcodeForm.shortTime} onChange={e=>setBarcodeForm({...barcodeForm,shortTime:e.target.value})} placeholder="Example: 10AM"/></label><label>Size<select value={barcodeForm.size} onChange={e=>setBarcodeForm({...barcodeForm,size:e.target.value})}>{['24','26','28','30','32','34','36','38','40','42'].map(s=><option key={s} value={s}>{s}</option>)}</select></label><label>Garment Type<select value={barcodeForm.garmentType} onChange={e=>setBarcodeForm({...barcodeForm,garmentType:e.target.value})}>{defaultGarmentTypes.map(g=><option key={g} value={g}>{g}</option>)}</select></label><label>Gender<select value={barcodeForm.gender} onChange={e=>setBarcodeForm({...barcodeForm,gender:e.target.value})}><option>Boys</option><option>Girls</option></select></label></div><div className="form-actions"><button className="outline" onClick={()=>{setShowGenerateBarcode(false);setEditBarcode(null)}}>Cancel</button><button className="primary" onClick={editBarcode?saveEditBarcode:generateSchoolBarcode}>{editBarcode?<>Save Changes</>:<>Generate Barcode</>}</button></div></article></div>}
+      {showGenerateBarcode&&<div className="stock-modal-overlay" onClick={()=>{setShowGenerateBarcode(false);setEditBarcode(null)}}><article className="card measurement-form entry-modal" onClick={e=>e.stopPropagation()}><div className="form-title"><div><h2>{editBarcode?'Edit School Barcode':'Generate School Barcode'}</h2><p>{editBarcode?`Update barcode ${editBarcode.barcode}`:'Create a new barcode for school ready stock tracking.'}</p></div></div><div className="form-grid"><label>Year<select value={barcodeForm.year} onChange={e=>setBarcodeForm({...barcodeForm,year:e.target.value})}>{['2025-26','2026-27','2027-28','2028-29','2029-30'].map(y=><option key={y} value={y}>{y}</option>)}</select></label><label>School<select value={barcodeForm.school} onChange={e=>setBarcodeForm({...barcodeForm,school:e.target.value})}><option value="">Select school</option>{activeSchools.map(s=><option key={s.id} value={s.name}>{s.name}</option>)}</select></label><label>Short Time<input value={barcodeForm.shortTime} onChange={e=>setBarcodeForm({...barcodeForm,shortTime:e.target.value})} placeholder="Example: 10AM"/></label><label>Size<select value={barcodeForm.size} onChange={e=>setBarcodeForm({...barcodeForm,size:e.target.value})}>{allSizes.map(size=><option key={size} value={size}>{size}</option>)}</select></label><label>Garment Type<select value={barcodeForm.garmentType} onChange={e=>setBarcodeForm({...barcodeForm,garmentType:e.target.value})}>{defaultGarmentTypes.map(g=><option key={g} value={g}>{g}</option>)}</select></label><label>Gender<select value={barcodeForm.gender} onChange={e=>setBarcodeForm({...barcodeForm,gender:e.target.value})}><option>Boys</option><option>Girls</option></select></label></div><div className="form-actions"><button className="outline" onClick={()=>{setShowGenerateBarcode(false);setEditBarcode(null)}}>Cancel</button><button className="primary" onClick={editBarcode?saveEditBarcode:generateSchoolBarcode}>{editBarcode?<>Save Changes</>:<>Generate Barcode</>}</button></div></article></div>}
       {viewBarcode&&<div className="stock-modal-overlay" onClick={()=>setViewBarcode(null)}><article className="card measurement-form detail-modal" onClick={e=>e.stopPropagation()}><div className="form-title"><div><h2>Barcode Details</h2><p>Information stored for this barcode.</p></div><span className="batch-no">{viewBarcode.barcode}</span></div><div className="barcode-print-preview"><BarcodeImage value={viewBarcode.barcode} width={2.5} height={50} fontSize={14}/></div><div className="detail-grid"><div><span>School</span><strong>{viewBarcode.school}</strong></div><div><span>Barcode</span><strong>{viewBarcode.barcode}</strong></div><div><span>Year</span><strong>{viewBarcode.year||'-'}</strong></div><div><span>Short Time</span><strong>{viewBarcode.shortTime||'-'}</strong></div><div><span>Size</span><strong>{viewBarcode.size}</strong></div><div><span>Garment Type</span><strong>{viewBarcode.garmentType}</strong></div><div><span>Gender</span><strong>{viewBarcode.gender}</strong></div><div><span>Generated Date</span><strong>{viewBarcode.generatedDate}</strong></div></div><div className="form-actions"><button className="outline" onClick={()=>setViewBarcode(null)}>Close</button></div></article></div>}
-      {viewStockEntry&&<div className="stock-modal-overlay" onClick={()=>setViewStockEntry(null)}><article className="card measurement-form detail-modal" onClick={e=>e.stopPropagation()}><div className="form-title"><div><h2>Ready Stock Details</h2><p>Information stored for this ready stock entry.</p></div><span className="batch-no">{viewStockEntry.id}</span></div><div className="barcode-print-preview"><BarcodeImage value={schoolBarcodes.find(b=>b.school===viewStockEntry.school&&b.gender===viewStockEntry.gender&&b.garmentType===viewStockEntry.garment&&b.size===viewStockEntry.size)?.barcode||`STOCK-${viewStockEntry.id}`} width={2.5} height={50} fontSize={14}/></div><div className="detail-grid"><div><span>School</span><strong>{viewStockEntry.school}</strong></div><div><span>Entry ID</span><strong>{viewStockEntry.id}</strong></div><div><span>Date</span><strong>{viewStockEntry.date}</strong></div><div><span>Gender</span><strong>{viewStockEntry.gender}</strong></div><div><span>Garment</span><strong>{viewStockEntry.garment}</strong></div><div><span>Size</span><strong>{viewStockEntry.size}</strong></div><div><span>Total Ready Count</span><strong>{viewStockEntry.count} Pcs</strong></div><div><span>Remarks</span><strong>{viewStockEntry.remarks||'-'}</strong></div></div><div className="form-actions"><button className="outline" onClick={()=>setViewStockEntry(null)}>Close</button></div></article></div>}
+      {viewStockEntry&&<div className="stock-modal-overlay" onClick={()=>setViewStockEntry(null)}><article className="card measurement-form detail-modal" onClick={e=>e.stopPropagation()}><div className="form-title"><div><h2>Ready Stock Details</h2><p>Information stored for this ready stock entry.</p></div><span className="batch-no">{viewStockEntry.id}</span></div><div className="barcode-print-preview"><BarcodeImage value={schoolBarcodes.find(b=>b.school===viewStockEntry.school&&b.gender===viewStockEntry.gender&&b.garmentType===viewStockEntry.garment&&b.size===viewStockEntry.size)?.barcode||`STOCK-${viewStockEntry.id}`} width={2.5} height={50} fontSize={14}/></div><div className="detail-grid"><div><span>School</span><strong>{viewStockEntry.school||'Common Stock'}</strong></div><div><span>Entry ID</span><strong>{viewStockEntry.id}</strong></div><div><span>Date</span><strong>{viewStockEntry.date}</strong></div><div><span>Gender</span><strong>{viewStockEntry.gender}</strong></div><div><span>Garment</span><strong>{viewStockEntry.garment}</strong></div><div><span>Size</span><strong>{viewStockEntry.size}</strong></div><div><span>Total Ready Count</span><strong>{viewStockEntry.count} Pcs</strong></div><div><span>Remarks</span><strong>{viewStockEntry.remarks||'-'}</strong></div></div><div className="form-actions"><button className="outline" onClick={()=>setViewStockEntry(null)}>Close</button></div></article></div>}
       {confirmDeleteBarcode&&<div className="salary-modal-overlay" onClick={()=>setConfirmDeleteBarcode(null)}><div className="salary-modal confirm-dialog" onClick={e=>e.stopPropagation()}><div className="confirm-icon"><AlertTriangle size={22}/></div><h3>Delete barcode?</h3><p>This will permanently remove barcode <strong>{confirmDeleteBarcode.barcode}</strong> assigned to <strong>{confirmDeleteBarcode.school}</strong>. This action cannot be undone.</p><div className="salary-modal-actions"><button className="outline" onClick={()=>setConfirmDeleteBarcode(null)}>Cancel</button><button className="danger-btn" onClick={confirmDeleteBarcodeFn}><Trash2 size={14}/> Yes, delete barcode</button></div></div></div>}
       </div>
     </div>}
@@ -741,6 +809,7 @@ const saveScanStockIn=async()=>{
     </div>}
     {tab==='items'&&<div className="masters-grid"><article className="card measurement-form"><div className="form-title"><div><h2>Item head</h2><p>Add inventory items once. They will appear in Stock In and Stock Out.</p></div></div><div className="form-grid"><label>Item code<input value={itemForm.code} onChange={e=>setItemForm({...itemForm,code:e.target.value})} placeholder="Example: FAB-002"/></label><label>Item name<input value={itemForm.name} onChange={e=>setItemForm({...itemForm,name:e.target.value})} placeholder="Example: Blue Fabric"/></label><label>Subcategory<input value={itemForm.subcategory} onChange={e=>setItemForm({...itemForm,subcategory:e.target.value})} placeholder="Example: Fabric, Button, Zip"/></label><label>Unit<select value={itemForm.unit} onChange={e=>setItemForm({...itemForm,unit:e.target.value})}><option>Piece</option><option>Meter</option><option>Kg</option><option>Box</option><option>Roll</option></select></label><label>Opening qty<input type="number" min="0" value={itemForm.openingQty} onChange={e=>setItemForm({...itemForm,openingQty:Number(e.target.value)})}/></label></div><div className="form-actions"><button className="primary" onClick={addItem}><Save size={16}/> Save item</button></div></article><article className="card jobs module-table"><div className="cardhead"><div><h2>Item head list</h2><p>These items are used in stock in and stock out dropdowns.</p></div></div><table><thead><tr><th>ITEM CODE</th><th>ITEM</th><th>SUBCATEGORY</th><th>UNIT</th><th>AVAILABLE QTY</th><th>ACTION</th></tr></thead><tbody>{visibleItems.map(item=><tr key={item[0]}><td><strong>{item[0]}</strong></td><td>{item[1]}</td><td>{item[2]}</td><td>{item[3]}</td><td>{item[4]}</td><td><button className="danger-btn" onClick={()=>deleteItem(item)}><Trash2 size={14}/> Delete</button></td></tr>)}</tbody></table>{normalizedItems.length>0&&<div className="table-footer paginated-footer"><span>Showing {((safeItemPage-1)*itemPageSize)+1}-{Math.min(safeItemPage*itemPageSize,normalizedItems.length)} of {normalizedItems.length} entries</span><div className="pager"><button className="outline" disabled={safeItemPage===1} onClick={()=>setItemPage(p=>Math.max(1,p-1))}>Prev</button><span>Page {safeItemPage} / {itemPageCount}</span><button className="outline" disabled={safeItemPage===itemPageCount} onClick={()=>setItemPage(p=>Math.min(itemPageCount,p+1))}>Next</button></div></div>}</article></div>}
     {partyStockModal}
+    {allocationModal}
     {issueStockModal}
     {smsDraft&&<SmsComposerModal draft={smsDraft} setDraft={setSmsDraft} onClose={()=>setSmsDraft(null)} onSend={sendStockIssueSms} sending={sendingSms} cancelLabel="Skip SMS"/>}
     {confirmStock&&<div className="salary-modal-overlay" onClick={()=>setConfirmStock(null)}><div className="salary-modal confirm-dialog" onClick={e=>e.stopPropagation()}><div className="confirm-icon"><AlertTriangle size={22}/></div><h3>Delete ready stock entry?</h3><p>This permanently removes <strong>{confirmStock.school}</strong> · <strong>{confirmStock.garment} (size {confirmStock.size})</strong> × <strong>{confirmStock.count} pcs</strong> from school ready stock. This action cannot be undone.</p><div className="salary-modal-actions"><button className="outline" onClick={()=>setConfirmStock(null)}>Cancel</button><button className="danger-btn" onClick={confirmDeleteSchoolStock}><Trash2 size={14}/> Yes, delete entry</button></div></div></div>}

@@ -148,7 +148,7 @@ export function App({ currentUser, onLogout }: AppProps) {
           page === 'Billing & Payments' ? <BillingPaymentsPage company={companySettings} customers={customers} schools={schools} students={students} navParams={navParams} onNavigate={handleNavigate} /> :
           page === 'Expenses' ? <ExpensesPage /> :
           page === 'Delivery' ? <DeliveryPage company={companySettings} customers={customers} /> :
-          page === 'Reports' ? <ReportsPage employees={employeeRecords} workTypes={workTypes} advances={advances} workEntries={workEntries} assignments={assignments} customers={customers} /> :
+          page === 'Reports' ? <ReportsPage schools={schools} employees={employeeRecords} workTypes={workTypes} advances={advances} workEntries={workEntries} assignments={assignments} customers={customers} /> :
           page === 'Settings' ? <SettingsPage company={companySettings} setCompany={setCompanySettings} modules={moduleSettings} setModules={setModuleSettings} moduleLabels={moduleLabels} /> :
           <Placeholder title={page} />}
       </main>

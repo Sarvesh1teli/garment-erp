@@ -561,6 +561,13 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     driver:"TEXT NOT NULL DEFAULT ''", delivery_mode:"TEXT NOT NULL DEFAULT ''", quantity:'REAL NOT NULL DEFAULT 0', unit:"TEXT NOT NULL DEFAULT ''", quantity_text:"TEXT NOT NULL DEFAULT ''",
     remarks:"TEXT NOT NULL DEFAULT ''",
   })) ensureColumn('delivery_challans', column, definition);
+  ensureColumn('invoice_payments', 'discount', 'REAL NOT NULL DEFAULT 0');
+  // Recover only explicit per-payment discount notes from older records.
+  const restorePaymentDiscount = database.prepare('UPDATE invoice_payments SET discount = ? WHERE id = ?');
+  for (const payment of database.prepare('SELECT id, remarks FROM invoice_payments WHERE discount = 0').all()) {
+    const match = String(payment.remarks || '').match(/\(incl\.\s*Rs\.?\s*([\d,]+(?:\.\d+)?)\s+discount\)/i);
+    if (match) restorePaymentDiscount.run(Number(match[1].replace(/,/g, '')), payment.id);
+  }
   ensureColumn('ready_school_stock', 'date', "TEXT NOT NULL DEFAULT ''");
   ensureColumn('students', 'year', "TEXT NOT NULL DEFAULT ''");
   for (const [column, definition] of Object.entries({
@@ -1674,11 +1681,11 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     },
     'invoice-payments': {
       legacyKey: 'garment-invoice-payments',
-      select: database.prepare('SELECT id, payment_date, invoice_no, customer, payment_mode, amount, reference, remarks FROM invoice_payments WHERE tenant_id = ? ORDER BY rowid'),
+      select: database.prepare('SELECT id, payment_date, invoice_no, customer, payment_mode, amount, discount, reference, remarks FROM invoice_payments WHERE tenant_id = ? ORDER BY rowid'),
       clear: database.prepare('DELETE FROM invoice_payments WHERE tenant_id = ?'),
-      insert: database.prepare('INSERT INTO invoice_payments (tenant_id, id, payment_date, invoice_no, customer, payment_mode, amount, reference, remarks) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
-      fromRows: (rows, tid) => rows.map(row => ({ id: unscopeId(row.id, tid), date:row.payment_date, invoiceNo: unscopeId(row.invoice_no, tid), customer:row.customer, mode:row.payment_mode, amount:Number(row.amount), reference:row.reference, remarks:row.remarks })),
-      insertRow: (row, tid) => Array.isArray(row) ? [tid, scopedId(row[0], tid),row[1],row[2],row[3],row[4],numericValue(row[5]),row[6]||'-',row[7]||''] : [tid, scopedId(row.id, tid),row.date,row.invoiceNo,row.customer,row.mode,numericValue(row.amount),row.reference||'-',row.remarks||''],
+      insert: database.prepare('INSERT INTO invoice_payments (tenant_id, id, payment_date, invoice_no, customer, payment_mode, amount, discount, reference, remarks) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
+      fromRows: (rows, tid) => rows.map(row => ({ id: unscopeId(row.id, tid), date:row.payment_date, invoiceNo: unscopeId(row.invoice_no, tid), customer:row.customer, mode:row.payment_mode, amount:Number(row.amount), discount:Number(row.discount)||0, reference:row.reference, remarks:row.remarks })),
+      insertRow: (row, tid) => Array.isArray(row) ? [tid, scopedId(row[0], tid),row[1],row[2],row[3],row[4],numericValue(row[5]),0,row[6]||'-',row[7]||''] : [tid, scopedId(row.id, tid),row.date,row.invoiceNo,row.customer,row.mode,numericValue(row.amount),numericValue(row.discount),row.reference||'-',row.remarks||''],
     },
     'delivery-challans': {
       legacyKey: 'garment-delivery-challans',
