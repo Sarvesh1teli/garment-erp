@@ -116,12 +116,12 @@ export function App({ currentUser, onLogout }: AppProps) {
 
         <div className="profile" style={{ flexShrink: 0, padding: '12px 14px', borderTop: '1px solid rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(0,0,0,0.15)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, overflow: 'hidden' }}>
-            <div className="avatar" style={{ background: '#007c68', color: '#fff', fontWeight: 700, borderRadius: '50%', width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0 }}>
+            <div className="avatar" style={{ background: '#2455A6', color: '#fff', fontWeight: 700, borderRadius: '50%', width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0 }}>
               {initials}
             </div>
             <div style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
               <strong style={{ display: 'block', fontSize: 13, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayName}</strong>
-              <span style={{ fontSize: 11, color: '#a7f3d0', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayEmail}</span>
+              <span style={{ fontSize: 11, color: '#DCE5F0', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayEmail}</span>
             </div>
           </div>
 
