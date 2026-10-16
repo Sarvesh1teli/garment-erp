@@ -1,3 +1,5 @@
+import { BulkOrderPanel } from '../../shared/BulkOrderPanel';
+import type { BulkOrder } from '../../shared/bulkOrders';
 import { useEffect, useMemo, useState } from 'react';
 import { BarChart3, Boxes, Check, Eye, Pencil, Plus, Printer, Save, Scissors, Trash2, Users } from 'lucide-react';
 import type React from 'react';
@@ -10,6 +12,7 @@ export function Measurements({company,schools,students,setStudents}:{company:Com
   type ReadyStock={id?:string;date?:string;school:string;className:string;gender:string;garment:string;size:string;count:number;remarks:string};
   const defaultGarments=['Shirt','Half Pant','Full Pant','Blouse','Skirt','Track Suit','Jacket'];
   const [customGarments,setCustomGarments]=useStoredState<string[]>('garment-measurement-custom-garments',[]);
+  const [bulkOrders]=useStoredState<BulkOrder[]>('garment-bulk-orders',[]);
   const [newGarment,setNewGarment]=useState('');
   const garments=[...defaultGarments,...customGarments];
   const schoolDetails:Record<string,{contact:string;phone:string;address:string}>=schools.reduce((acc,s)=>{acc[s.name]={contact:s.contact,phone:s.phone,address:s.location};return acc},{} as Record<string,{contact:string;phone:string;address:string}>);
@@ -38,7 +41,7 @@ export function Measurements({company,schools,students,setStudents}:{company:Com
   const [summarySizePage,setSummarySizePage]=useState(1);
   const [summarySizePageSize,setSummarySizePageSize]=useState(5);
   const [showSummaryPreview,setShowSummaryPreview]=useState(false);
-  const [measurementTab,setMeasurementTab]=useState<'entry'|'students'|'totals'|'stock'>('entry');
+  const [measurementTab,setMeasurementTab]=useState<'entry'|'students'|'totals'|'stock'|'bulk'>('entry');
   const [stockForm,setStockForm]=useState<ReadyStock>({date:new Date().toISOString().slice(0,10),school:firstSchool,className:'6',gender:'Boys',garment:'Full Pant',size:'32',count:0,remarks:''});
   const [showAddStockForm,setShowAddStockForm]=useState(false);
   const [stockSchool,setStockSchool]=useState(firstSchool);
@@ -54,9 +57,12 @@ export function Measurements({company,schools,students,setStudents}:{company:Com
   const pagedMeasuredRows=measuredRows.slice((studentPage-1)*studentPageSize,studentPage*studentPageSize);
   const summaryStudents=students.filter(s=>(!summarySchool||s.school===summarySchool)&&(!summaryYear||s.year===summaryYear)&&(!summaryClass||s.className===summaryClass)&&(!summarySection||s.section===summarySection)&&(!summaryGender||s.gender===summaryGender));
   const counts:Record<string,number>={}; summaryStudents.forEach(s=>Object.entries(s.sizes).forEach(([item,size])=>{if(size)counts[`${item}|${size}`]=(counts[`${item}|${size}`]||0)+1}));
-  const garmentTotals=garments.map(item=>({item,count:summaryStudents.filter(s=>s.sizes[item]).length})).filter(x=>x.count>0);
+  const summaryBulk=bulkOrders.filter(o=>o.mode==='additional'&&(!summarySchool||o.school===summarySchool)&&(!summaryYear||o.year===summaryYear)&&(!summaryClass||o.className===summaryClass)&&!summarySection);
+  summaryBulk.forEach(o=>o.lines.filter(r=>!summaryGender||r.gender===summaryGender).forEach(r=>{counts[`${r.garment}|${r.size}`]=(counts[`${r.garment}|${r.size}`]||0)+r.quantity}));
+  const summaryGarments=Array.from(new Set([...garments,...summaryBulk.flatMap(o=>o.lines.map(r=>r.garment))]));
+  const garmentTotals=summaryGarments.map(item=>({item,count:Object.entries(counts).filter(([key])=>key.startsWith(`${item}|`)).reduce((n,[,qty])=>n+qty,0)})).filter(x=>x.count>0);
   const groupedSizeRows=Object.entries(counts).sort().map(([key,count])=>{const[item,size]=key.split('|');return {item,size,count}});
-  const garmentSizeSummaryRows=garments.map(item=>{const rows=groupedSizeRows.filter(row=>row.item===item).sort((a,b)=>Number(a.size)-Number(b.size)||a.size.localeCompare(b.size));const total=rows.reduce((sum,row)=>sum+row.count,0);return {item,sizes:rows.map(row=>`${row.size} / ${row.count}`).join(', '),total}}).filter(row=>row.total>0);
+  const garmentSizeSummaryRows=summaryGarments.map(item=>{const rows=groupedSizeRows.filter(row=>row.item===item).sort((a,b)=>Number(a.size)-Number(b.size)||a.size.localeCompare(b.size));const total=rows.reduce((sum,row)=>sum+row.count,0);return {item,sizes:rows.map(row=>`${row.size} / ${row.count}`).join(', '),total}}).filter(row=>row.total>0);
   const summarySizePageCount=Math.max(1,Math.ceil(garmentSizeSummaryRows.length/summarySizePageSize));
   const pagedGarmentSizeSummaryRows=garmentSizeSummaryRows.slice((summarySizePage-1)*summarySizePageSize,summarySizePage*summarySizePageSize);
   const stockSchools=Array.from(new Set([...students.map(s=>s.school),...readyStock.map(s=>s.school)]));
@@ -71,15 +77,15 @@ export function Measurements({company,schools,students,setStudents}:{company:Com
   const addReadyStock=async()=>{const garmentName=stockForm.garment==='Other'?stockOtherGarment.trim():stockForm.garment;if(!stockForm.school||!stockForm.className||!stockForm.gender||!garmentName||!stockForm.size||stockForm.count<=0)return;if(!garments.some(item=>item.toLowerCase()===garmentName.toLowerCase()))setCustomGarments(current=>[...current,garmentName]);const row={school:stockForm.school,className:stockForm.className,date:stockForm.date||new Date().toISOString().slice(0,10),gender:stockForm.gender,garment:garmentName,size:stockForm.size,count:Number(stockForm.count),remarks:stockForm.remarks};try{const response=await fetch(`${API_BASE_URL}/api/ready-school-stock`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(row)});if(!response.ok)throw new Error('Unable to save ready stock');const body=await response.json();setReadyStock(current=>[...current,body.data]);setStockSchool(stockForm.school);setStockClass(stockForm.className);setStockGender(stockForm.gender);setStockForm(current=>({...current,garment:garmentName,count:0,remarks:''}));setStockOtherGarment('');setShowAddStockForm(false)}catch(error){console.error(error)}};
   const classWiseRows=Object.values(summaryStudents.reduce((acc,student)=>{const key=student.className||'Not specified';acc[key]=acc[key]||{className:key,total:0,boys:0,girls:0,pieces:0};acc[key].total+=1;if(student.gender==='Boys')acc[key].boys+=1;if(student.gender==='Girls')acc[key].girls+=1;acc[key].pieces+=Object.values(student.sizes).filter(Boolean).length;return acc},{} as Record<string,{className:string;total:number;boys:number;girls:number;pieces:number}>)).sort((a,b)=>a.className.localeCompare(b.className));
   const selectedSchoolDetails=summarySchool?schoolDetails[summarySchool]:null;
-  const summarySchools=Array.from(new Set(students.map(s=>s.school)));
+  const summarySchools=Array.from(new Set([...students.map(s=>s.school),...bulkOrders.map(o=>o.school)]));
   const studentYears=Array.from(new Set(students.map(s=>s.year).filter(Boolean)));
-  const summaryYears=studentYears;
-  const summaryClasses=Array.from(new Set(students.filter(s=>!summarySchool||s.school===summarySchool).map(s=>s.className).filter(Boolean)));
+  const summaryYears=Array.from(new Set([...studentYears,...bulkOrders.map(o=>o.year)]));
+  const summaryClasses=Array.from(new Set([...students.filter(s=>!summarySchool||s.school===summarySchool).map(s=>s.className),...bulkOrders.filter(o=>!summarySchool||o.school===summarySchool).map(o=>o.className)].filter(Boolean)));
   const summarySections=Array.from(new Set(students.filter(s=>(!summarySchool||s.school===summarySchool)&&(!summaryClass||s.className===summaryClass)).map(s=>s.section).filter(Boolean)));
   const updateStudent=(index:number,changes:Partial<Student>)=>setStudents(current=>current.map((student,i)=>i===index?{...student,...changes}:student));
   const updateStudentSize=(index:number,item:string,size:string)=>setStudents(current=>current.map((student,i)=>i===index?{...student,sizes:{...student.sizes,[item]:size}}:student));
   const addStudent=()=>{if(!form.name.trim())return;const saved={...form,id:typeof crypto!=='undefined'&&crypto.randomUUID?crypto.randomUUID():`st_${Date.now()}_${Math.random().toString(36).slice(2,9)}`,sizes:{...form.sizes}};setStudents(current=>[...current,saved]);setForm({...form,name:'',admission:'',sizes:{}});setAddedStudent(saved)};
-  const switchMeasurementTab=(next:'entry'|'students'|'totals'|'stock')=>{
+  const switchMeasurementTab=(next:'entry'|'students'|'totals'|'stock'|'bulk')=>{
     setMenuPos(null);
     setMeasurementTab(next);
   };
@@ -102,7 +108,7 @@ export function Measurements({company,schools,students,setStudents}:{company:Com
     setSummaryYear(current=>current&&students.some(student=>student.year===current)?current:'');
   },[students]);
   useEffect(()=>{
-    setSummaryClass(current=>current&&students.some(student=>(!summarySchool||student.school===summarySchool)&&(!summaryYear||student.year===summaryYear)&&student.className===current)?current:'');
+    setSummaryClass(current=>current&&students.some(student=>(!summarySchool||student.school===summarySchool)&&(!summaryYear||student.year===summaryYear)&&student.className===current)||bulkOrders.some(o=>(!summarySchool||o.school===summarySchool)&&(!summaryYear||o.year===summaryYear)&&o.className===current)?current:'');
     setSummarySection(current=>current&&students.some(student=>(!summarySchool||student.school===summarySchool)&&(!summaryYear||student.year===summaryYear)&&(!summaryClass||student.className===summaryClass)&&student.section===current)?current:'');
   },[students,summarySchool,summaryYear,summaryClass]);
   useEffect(()=>{setStudentPage(1)},[studentSearch,studentSchool,filterClass,studentGender,studentYear,studentPageSize]);
@@ -110,7 +116,8 @@ export function Measurements({company,schools,students,setStudents}:{company:Com
   useEffect(()=>{setSummarySizePage(1)},[summarySchool,summaryClass,summarySection,summaryGender,summaryYear,summarySizePageSize,customGarments.length]);
   useEffect(()=>{if(summarySizePage>summarySizePageCount)setSummarySizePage(summarySizePageCount)},[summarySizePage,summarySizePageCount]);
   return <section className="content">
-    <div className="measurement-tabs wage-tabs"><button type="button" className={measurementTab==='entry'?'active':''} onClick={()=>switchMeasurementTab('entry')}><Plus size={16}/><span>Add Measurement<small>Record a student</small></span></button><button type="button" className={measurementTab==='students'?'active':''} onClick={()=>switchMeasurementTab('students')}><Users size={16}/><span>Measured Students<small>{students.length} student records</small></span></button><button type="button" className={measurementTab==='totals'?'active':''} onClick={()=>switchMeasurementTab('totals')}><BarChart3 size={16}/><span>Prod summary<small>school + class + gender</small></span></button><button type="button" className={measurementTab==='stock'?'active':''} onClick={()=>switchMeasurementTab('stock')}><Boxes size={16}/><span>ReadySchool stock<small>school-wise ready pieces</small></span></button></div>
+    <div className="measurement-tabs wage-tabs"><button type="button" className={measurementTab==='entry'?'active':''} onClick={()=>switchMeasurementTab('entry')}><Plus size={16}/><span>Add Measurement<small>Record a student</small></span></button><button type="button" className={measurementTab==='bulk'?'active':''} onClick={()=>switchMeasurementTab('bulk')}><Boxes size={16}/><span>Bulk Orders<small>size-wise quantities</small></span></button><button type="button" className={measurementTab==='students'?'active':''} onClick={()=>switchMeasurementTab('students')}><Users size={16}/><span>Measured Students<small>{students.length} student records</small></span></button><button type="button" className={measurementTab==='totals'?'active':''} onClick={()=>switchMeasurementTab('totals')}><BarChart3 size={16}/><span>Prod summary<small>school + class + gender</small></span></button><button type="button" className={measurementTab==='stock'?'active':''} onClick={()=>switchMeasurementTab('stock')}><Boxes size={16}/><span>ReadySchool stock<small>school-wise ready pieces</small></span></button></div>
+    {measurementTab==='bulk'&&<BulkOrderPanel schools={schools}/>}
     {measurementTab==='entry'&&<article className="card measurement-form"><div className="form-title"><div><h2>Add student measurement</h2><p>Enter the student details and the size required for each garment piece.</p></div><span className="batch-no">{students.length} STUDENTS</span></div>
       <div className="form-grid student-details"><label>School<select value={form.school} onChange={e=>setForm({...form,school:e.target.value})}><option value="">Select school</option>{schoolOptions}</select></label><label>Year<input type="number" min="2000" max="2100" placeholder="e.g. 2026" value={form.year||''} onChange={e=>setForm({...form,year:e.target.value})}/></label><label>Class<select value={form.className} onChange={e=>setForm({...form,className:e.target.value})}><option value="">Not specified</option>{['Nursery','LKG','UKG','1','2','3','4','5','6','7','8','9','10','11','12'].map(x=><option key={x}>{x}</option>)}</select></label><label>Section<select value={form.section} onChange={e=>setForm({...form,section:e.target.value})}><option value="">Not specified</option><option>A</option><option>B</option><option>C</option><option>D</option></select><small>Optional</small></label><label>Student name<input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Enter student name"/></label><label>Admission / Roll No.<input value={form.admission} onChange={e=>setForm({...form,admission:e.target.value})} placeholder="Optional"/></label><label>Gender<select value={form.gender} onChange={e=>setForm({...form,gender:e.target.value})}><option>Boys</option><option>Girls</option></select></label></div>
       <div className="garment-heading"><div><h3>Garment measurements / sizes</h3><p>Enter the measured size manually for every required piece. Leave non-required pieces blank.</p></div><div className="custom-garment-control"><input value={newGarment} onChange={e=>setNewGarment(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();addCustomGarment()}}} placeholder="Custom garment"/><button type="button" className="primary" onClick={addCustomGarment}><Plus size={15}/> Add</button></div></div>

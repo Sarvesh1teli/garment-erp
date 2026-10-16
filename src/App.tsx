@@ -135,7 +135,7 @@ export function App({ currentUser, onLogout }: AppProps) {
 
       <main>
         {page === 'Dashboard' ? <DashboardPage assignments={assignments} schools={schools} students={students} /> :
-          page === 'School Orders' ? <SchoolOrdersPage /> :
+          page === 'School Orders' ? <SchoolOrdersPage schools={schools} /> :
           page === 'SMS Gateway' ? <GatewaySettingsPage company={companySettings} /> :
           page === 'Customers & Schools' ? <CustomersSchools key={`customers-${customerResetKey}`} company={companySettings} customers={customers} setCustomers={setCustomers} schools={schools} setSchools={setSchools} students={students} garmentPrices={garmentPrices} onNavigate={handleNavigate} navParams={navParams} /> :
           page === 'Measurements' ? <Measurements company={companySettings} schools={schools} students={students} setStudents={setStudents} /> :

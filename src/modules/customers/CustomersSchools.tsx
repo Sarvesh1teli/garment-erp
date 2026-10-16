@@ -1,3 +1,4 @@
+import type { BulkOrder } from '../../shared/bulkOrders';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import { AlertTriangle, ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Boxes, CheckCircle2, CheckSquare, ClipboardList, CreditCard, ExternalLink, Eye, Factory, FileText, Filter, IndianRupee, MessageSquare, Pencil, Plus, Printer, Scissors, Search, Trash2, Truck, Users, WalletCards, X } from 'lucide-react';
@@ -174,6 +175,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
   useEffect(()=>{const close=()=>setMenuPos(null);window.addEventListener('click',close);return()=>window.removeEventListener('click',close)},[]);
 
 
+  const [bulkOrders]=useStoredState<BulkOrder[]>('garment-bulk-orders',[]);
   const computeProductSummary = useCallback((schoolName: string) => {
     const reqMap=new Map<string,{year:string;gender:string;garment:string;size:string;qty:number}>();
     (students||[]).filter(st=>st.school===schoolName).forEach(st=>{
@@ -192,6 +194,10 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
       }
     });
 
+    bulkOrders.filter(o=>o.school===schoolName&&o.mode==='additional').forEach(o=>o.lines.forEach(r=>{
+      const year=normalizeAcademicYear(o.year);const key=`${year}||${r.gender}||${r.garment}||${r.size}`;
+      const cur=reqMap.get(key)||{year,gender:r.gender,garment:r.garment,size:r.size,qty:0};cur.qty+=r.quantity;reqMap.set(key,cur);
+    }));
     const readyTotalsMap=new Map<string,number>();
     schoolStock.filter(s=>s.school===schoolName).forEach(s=>{
       const gender=s.gender||'Boys';
@@ -291,7 +297,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
     });
 
     return resultList;
-  },[students,schoolStock,schoolSales]);
+  },[students,schoolStock,schoolSales,bulkOrders]);
 
   const productSummary=useMemo(()=>{
     if(!viewSchool)return [];

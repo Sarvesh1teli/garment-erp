@@ -1,6 +1,9 @@
+import { BulkOrderPanel } from '../../shared/BulkOrderPanel';
+import type { BulkOrder } from '../../shared/bulkOrders';
+import type { School as LocalSchool } from '../../shared/types';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ClipboardList, Copy, RefreshCw, School, X } from "lucide-react";
-import { getStoredTenantId } from "../../shared/utils";
+import { getStoredTenantId, useStoredState } from "../../shared/utils";
 
 const SCHOOL_ORDER_CLOUD_URL = "https://garment.telicampus.in";
 
@@ -32,13 +35,17 @@ const showDate = (value?: string) =>
     ? new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString("en-IN")
     : "-";
 
-export function SchoolOrdersPage() {
+export function SchoolOrdersPage({schools}:{schools:LocalSchool[]}) {
+  const [bulkOrders]=useStoredState<BulkOrder[]>('garment-bulk-orders',[]);
+  const [productionOrder,setProductionOrder]=useState<Order|null>(null);
   const [code, setCode] = useState("");
   const [links, setLinks] = useState<Link[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [tab, setTab] = useState<"orders" | "connections">("orders");
   const [status, setStatus] = useState("ALL");
   const [search, setSearch] = useState("");
+  const [orderFrom,setOrderFrom] = useState("");
+  const [orderTo,setOrderTo] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<Order | null>(null);
@@ -167,12 +174,14 @@ export function SchoolOrdersPage() {
       orders.filter(
         (order) =>
           (status === "ALL" || order.status === status) &&
+          (!orderFrom || order.orderDate.slice(0,10) >= orderFrom) &&
+          (!orderTo || order.orderDate.slice(0,10) <= orderTo) &&
           (!search ||
             `${order.orderNo} ${order.schoolName}`
               .toLowerCase()
               .includes(search.toLowerCase())),
       ),
-    [orders, status, search],
+    [orders, status, search, orderFrom, orderTo],
   );
   const submitted = orders.filter(
       (order) => order.status === "SUBMITTED",
@@ -278,6 +287,9 @@ export function SchoolOrdersPage() {
                 <option>REJECTED</option>
               </select>
             </label>
+            <label>From date<input type="date" value={orderFrom} max={orderTo||undefined} onChange={e=>setOrderFrom(e.target.value)}/></label>
+            <label>To date<input type="date" value={orderTo} min={orderFrom||undefined} onChange={e=>setOrderTo(e.target.value)}/></label>
+            <button className="outline" onClick={()=>{setOrderFrom("");setOrderTo("");setSearch("");setStatus("ALL");}}>Clear Filters</button>
             <button className="outline" onClick={sync}>
               <RefreshCw /> {busy ? "Syncing..." : "Sync Now"}
             </button>
@@ -480,6 +492,7 @@ export function SchoolOrdersPage() {
                 {selected.rejectionReason}
               </div>
             )}
+            {selected.status!=='REJECTED'&&<div className="form-actions"><button className="primary" disabled={bulkOrders.some(o=>o.sourceOrderId===selected.id)} onClick={()=>setProductionOrder(selected)}>{bulkOrders.some(o=>o.sourceOrderId===selected.id)?'Added to Production':selected.status==='SUBMITTED'?'Accept & Add to Production':'Add to Production'}</button></div>}
             {selected.status === "SUBMITTED" && (
               <div className="form-actions">
                 <button
@@ -499,6 +512,7 @@ export function SchoolOrdersPage() {
           </article>
         </div>
       )}
+      {productionOrder&&<div className="stock-modal-overlay"><article className="card bulk-import-modal"><button className="outline" onClick={()=>setProductionOrder(null)}>Close</button><BulkOrderPanel schools={schools} source={{id:productionOrder.id,reference:productionOrder.orderNo,school:productionOrder.schoolName,requiredDate:productionOrder.requiredDate,lines:productionOrder.items.map(r=>({gender:'',garment:r.garmentType,size:r.size,quantity:r.quantity}))}} onBeforeSave={async()=>{if(productionOrder.status==='SUBMITTED'){await request(`/api/garment/school-orders/${productionOrder.id}/accept`,{method:'POST',signal:AbortSignal.timeout(15000),body:JSON.stringify({remark:'Accepted for production.',performedBy:'Garment Admin'})});setOrders(rows=>rows.map(o=>o.id===productionOrder.id?{...o,status:'ACCEPTED'}:o));}}} onSaved={()=>{setNotice(`Order ${productionOrder.orderNo} added to production.`);setProductionOrder(null);setSelected(null);}}/></article></div>}
       {orderAction && (
         <div className="order-confirm-overlay" onClick={closeOrderAction}>
           <article className={`order-confirm-card ${orderAction.action}`} onClick={(event) => event.stopPropagation()}>
