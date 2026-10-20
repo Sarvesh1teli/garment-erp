@@ -146,7 +146,7 @@ export function SaaSOnboardingModal({ onClose }: { onClose: () => void }) {
                       <span style={{ fontSize: 12, color: '#78350f' }}>Contact: {t.contactPerson} ({t.email}) | Mobile: {t.phone}</span>
                       <div style={{ marginTop: 4, display: 'flex', gap: 8, fontSize: 11 }}>
                         <span style={{ background: '#fef3c7', padding: '2px 8px', borderRadius: 4, color: '#b45309', fontWeight: 700 }}>Plan: {t.plan}</span>
-                        <span style={{ background: '#fef3c7', padding: '2px 8px', borderRadius: 4, color: '#b45309', fontWeight: 700 }}>Subdomain: {t.subdomain}.garment.telicampus.in</span>
+                        <span style={{ background: '#fef3c7', padding: '2px 8px', borderRadius: 4, color: '#b45309', fontWeight: 700 }}>Subdomain: {t.subdomain}.garment.telisoftware.com</span>
                       </div>
                     </div>
                     <button className="primary" style={{ background: '#10b981', borderColor: '#059669', padding: '8px 18px', fontSize: 13, fontWeight: 700 }} onClick={() => handleApprove(t.tenantId)}>
@@ -181,7 +181,7 @@ export function SaaSOnboardingModal({ onClose }: { onClose: () => void }) {
                     <td><code style={{ background: '#f1f5f9', padding: '2px 6px', borderRadius: 4 }}>{t.email}</code></td>
                     <td><span className="status in-progress">{t.plan}</span></td>
                     <td><span className="status completed">🟢 Active</span></td>
-                    <td><small style={{ color: '#007c68', fontWeight: 700 }}>https://garment.telicampus.in/login</small></td>
+                    <td><small style={{ color: '#007c68', fontWeight: 700 }}>https://garment.telisoftware.com/login</small></td>
                   </tr>
                 ))}
               </tbody>

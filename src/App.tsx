@@ -19,6 +19,7 @@ import { defaultAdvances, defaultAssignments, defaultAttendance, defaultCompanyS
 import type { AdvanceEntry, Assignment, AttendanceEntry, Employee, GarmentPrice, SalaryPayment, School, Student, WorkEntry, WorkType } from './shared/types';
 import { Placeholder } from './shared/ui';
 import { useStoredState } from './shared/utils';
+import { GarmentTypesProvider } from './shared/GarmentTypes';
 
 const nav = [['Dashboard',LayoutDashboard],['School Orders',Network],['SMS Gateway',MessageSquare],['Customers & Schools',Users],['Measurements',ClipboardList],['Production',Scissors],['Staff Management',UserCog],['Work Assignment',ListChecks],['Work Calculation / Salary',Calculator],['Attendance',CalendarCheck],['Inventory',Boxes],['Billing & Payments',ReceiptText],['Expenses',WalletCards],['Delivery',Truck],['Reports',BarChart3],['Settings',Settings]] as const;
 const moduleLabels=nav.map(([label])=>label);
@@ -28,7 +29,11 @@ type AppProps = {
   onLogout?: () => void;
 };
 
-export function App({ currentUser, onLogout }: AppProps) {
+export function App(props:AppProps){
+  return <GarmentTypesProvider><AppWorkspace {...props}/></GarmentTypesProvider>;
+}
+
+function AppWorkspace({ currentUser, onLogout }: AppProps) {
   const [page, setPage] = useState('Dashboard');
   const [staffTab, setStaffTab] = useState<'list' | 'add'>('list');
   const [navParams, setNavParams] = useState<Record<string, unknown> | null>(null);
@@ -92,7 +97,8 @@ export function App({ currentUser, onLogout }: AppProps) {
 
       <aside className={`sidebar ${mobileOpen ? 'mobile-open' : ''}`} style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
         <div className="brand app-logo-brand">
-          <img src="/threadflow-logo.png" alt="ThreadFlow Garment ERP" />
+          <div className="brandmark" aria-hidden="true">TF</div>
+          <div><strong>ThreadFlow</strong><span>Garment ERP</span></div>
         </div>
 
         <nav style={{ flex: 1, overflowY: 'auto', paddingRight: 4 }}>
@@ -135,7 +141,7 @@ export function App({ currentUser, onLogout }: AppProps) {
 
       <main>
         {page === 'Dashboard' ? <DashboardPage assignments={assignments} schools={schools} students={students} /> :
-          page === 'School Orders' ? <SchoolOrdersPage schools={schools} /> :
+          page === 'School Orders' ? <SchoolOrdersPage schools={schools} businessName={companySettings.name} /> :
           page === 'SMS Gateway' ? <GatewaySettingsPage company={companySettings} /> :
           page === 'Customers & Schools' ? <CustomersSchools key={`customers-${customerResetKey}`} company={companySettings} customers={customers} setCustomers={setCustomers} schools={schools} setSchools={setSchools} students={students} garmentPrices={garmentPrices} onNavigate={handleNavigate} navParams={navParams} /> :
           page === 'Measurements' ? <Measurements company={companySettings} schools={schools} students={students} setStudents={setStudents} /> :

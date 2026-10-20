@@ -16,12 +16,14 @@
     "desktop:installer": "npm run build && electron-builder --win nsis",
     "cap:add": "npx cap add android",
     "cap:sync": "npm run build && npx cap sync android",
-    "cap:open": "npx cap open android"
+    "cap:open": "npx cap open android",
+    "school:build": "tsc && vite build --config vite.school.config.ts && vite build --config vite.school-worker.config.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.1",
     "@capacitor/cli": "^8.5.1",
     "@capacitor/core": "^8.5.1",
+    "firebase": "^13.0.0",
     "html5-qrcode": "^2.3.8",
     "jsbarcode": "^3.12.3",
     "qrcode.react": "^4.2.0"
@@ -46,7 +48,7 @@
   "build": {
     "appId": "in.teli.threadflow",
     "productName": "Teli ThreadFlow Garment",
-    "copyright": "Copyright © 2026 Teli Software",
+    "copyright": "Copyright \u00c2\u00a9 2026 Teli Software",
     "directories": {
       "buildResources": "build",
       "output": "release"

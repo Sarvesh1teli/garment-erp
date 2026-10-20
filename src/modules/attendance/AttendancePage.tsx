@@ -31,6 +31,8 @@ export function AttendancePage({ employees, attendance, setAttendance, company }
   const [selectedMonth, setSelectedMonth] = useState<number>(currentMonthIdx);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('All');
   const [dailyStaffFilter, setDailyStaffFilter] = useState<string>('All');
+  const [dailyPage,setDailyPage]=useState(1);
+  const [dailyPageSize,setDailyPageSize]=useState(5);
   const [showPrintPreview, setShowPrintPreview] = useState(false);
 
   const uniqueEmployees = useMemo(() => {
@@ -56,6 +58,11 @@ export function AttendancePage({ employees, attendance, setAttendance, company }
     const sel = String(dailyStaffFilter).trim();
     return activeEmployees.filter(e => String(e.id).trim() === sel || e.name === sel);
   }, [activeEmployees, dailyStaffFilter]);
+  const dailyPageCount=Math.max(1,Math.ceil(filteredDailyEmployees.length/dailyPageSize));
+  const safeDailyPage=Math.min(dailyPage,dailyPageCount);
+  const pagedDailyEmployees=filteredDailyEmployees.slice((safeDailyPage-1)*dailyPageSize,safeDailyPage*dailyPageSize);
+  useEffect(()=>{setDailyPage(1);},[dailyStaffFilter,markDate,dailyPageSize]);
+  useEffect(()=>{setDailyPage(page=>Math.min(page,dailyPageCount));},[dailyPageCount]);
 
   const isSunday = useMemo(() => {
     if (!markDate) return false;
@@ -427,7 +434,7 @@ export function AttendancePage({ employees, attendance, setAttendance, company }
                 </tr>
               </thead>
               <tbody>
-                {filteredDailyEmployees.map(emp => {
+                {pagedDailyEmployees.map(emp => {
                   const draft = dailyDraft[emp.id] || { status: '', remarks: '' };
                   const currentStatus = draft.status;
                   return (
@@ -501,7 +508,8 @@ export function AttendancePage({ employees, attendance, setAttendance, company }
               </tbody>
             </table>
             <div className="table-footer paginated-footer">
-              <span>Showing {filteredDailyEmployees.length} of {activeEmployees.length} active staff members</span>
+              <span>Showing {filteredDailyEmployees.length?(safeDailyPage-1)*dailyPageSize+1:0}–{Math.min(safeDailyPage*dailyPageSize,filteredDailyEmployees.length)} of {filteredDailyEmployees.length} staff</span>
+              <div className="pager"><label>Rows<select aria-label="Daily attendance rows per page" value={dailyPageSize} onChange={e=>setDailyPageSize(Number(e.target.value))}>{[5,10,20,50].map(size=><option key={size} value={size}>{size}</option>)}</select></label><button className="outline" disabled={safeDailyPage===1} onClick={()=>setDailyPage(page=>Math.max(1,page-1))}>Prev</button><span>Page {safeDailyPage} / {dailyPageCount}</span><button className="outline" disabled={safeDailyPage===dailyPageCount} onClick={()=>setDailyPage(page=>Math.min(dailyPageCount,page+1))}>Next</button></div>
               <button className="primary" onClick={saveDailyAttendance}>
                 <CheckCircle2 size={16} /> Save Attendance
               </button>

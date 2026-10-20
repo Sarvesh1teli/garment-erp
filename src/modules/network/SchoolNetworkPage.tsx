@@ -730,7 +730,7 @@ export function SchoolNetworkPage({company}:{company:CompanySettings}) {
                 <div>
                   <span style={{ fontSize: 11, color: '#64748b', fontWeight: 700, display: 'block' }}>2. GARMENT API URL *</span>
                   <code style={{ background: '#fff', padding: '4px 8px', borderRadius: 4, border: '1px solid #e2e8f0', display: 'block', wordBreak: 'break-all' }}>http://127.0.0.1:47831/api/v1/school-connections/requests</code>
-                  <small style={{ color: '#059669', display: 'block', marginTop: 2 }}>Production: https://garment.telicampus.in/api/v1/school-connections/requests</small>
+                  <small style={{ color: '#059669', display: 'block', marginTop: 2 }}>Production: https://garment.telisoftware.com/api/v1/school-connections/requests</small>
                 </div>
                 <div>
                   <span style={{ fontSize: 11, color: '#64748b', fontWeight: 700, display: 'block' }}>3. API KEY IDENTIFIER</span>

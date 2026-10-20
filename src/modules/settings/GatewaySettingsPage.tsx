@@ -577,7 +577,7 @@ export function GatewaySettingsPage({company}:{company:CompanySettings}) {
         </strong>
         <ol style={{ margin: 0, paddingLeft: 18, color: "#475569", lineHeight: 2, fontSize: 13 }}>
           <li>Install <code>threadflow-gateway.apk</code> on any Android phone with an active SIM card.</li>
-          <li>Open the app and enter <strong>ERP Backend URL</strong>: <code>http://YOUR_IP:47831</code> or <code>https://garment.telicampus.in</code></li>
+          <li>Open the app and enter <strong>ERP Backend URL</strong>: <code>http://YOUR_IP:47831</code> or <code>https://garment.telisoftware.com</code></li>
           <li>Enter the <strong>Organization Code</strong> shown above.</li>
           <li>Enter <strong>Device Key</strong>: the key shown above in Device Status panel</li>
           <li>Tap <strong>Connect</strong>, then tap <strong>Start</strong> - the phone will now send SMS in English, Kannada, or Both automatically!</li>

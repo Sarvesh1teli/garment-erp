@@ -49,7 +49,7 @@ The school is automatically selected from the signed-in school account. Users mu
 
 ## Current deployment
 
-- Public URL: `https://garment.telicampus.in/school-orders/`
+- Public URL: `https://garment.telisoftware.com/school-orders/`
 - Dedicated API/service port: `18081`
 - Dedicated systemd service: `school-uniform-order.service`
 - Cloud application directory: `/tmp/ubuntu/garment`

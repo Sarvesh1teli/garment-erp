@@ -1,3 +1,4 @@
+import { useGarmentTypes } from '../../shared/GarmentTypes';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, BarChart3, Calculator, CheckCircle2, ClipboardList, Eye, IndianRupee, Pencil, Plus, Printer, ReceiptText, RotateCcw, Save, Search, Settings, Tag, Trash2, WalletCards } from 'lucide-react';
 import type React from 'react';
@@ -25,6 +26,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
   const [garmentPriceSearch,setGarmentPriceSearch]=useState('');
   const [garmentPriceFilterGarment,setGarmentPriceFilterGarment]=useState('All');
   const [garmentPriceFilterQuality,setGarmentPriceFilterQuality]=useState('All');
+  const catalog=useGarmentTypes();
   const [newGarmentPrice,setNewGarmentPrice]=useState<Omit<GarmentPrice,'id'>>({quality:'Standard',garmentType:'Shirt',size:'28',price:0,remarks:''});
   const [editingPriceId,setEditingPriceId]=useState<string|null>(null);
   const [editGarmentPriceDraft,setEditGarmentPriceDraft]=useState<GarmentPrice|null>(null);
@@ -208,6 +210,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
   }, [garmentPricePageCount]);
 
   const handleAddGarmentPrice = () => {
+    try{catalog.add(newGarmentPrice.garmentType);}catch(error){window.alert(error instanceof Error?error.message:'Unable to add garment');return;}
     if (!newGarmentPrice.garmentType.trim() || !newGarmentPrice.size.trim() || newGarmentPrice.price <= 0) {
       window.alert('Please enter Garment Type, Size, and a Price greater than 0.');
       return;
@@ -863,22 +866,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
                   onChange={e=>setNewGarmentPrice({...newGarmentPrice,garmentType:e.target.value})}
                   style={{display:'block',width:'100%',marginTop:4,padding:'6px 8px',border:'1px solid #86efac',borderRadius:6,fontSize:12}}
                 />
-                <datalist id="garment-presets">
-                  <option value="Shirt"/>
-                  <option value="Full Pant"/>
-                  <option value="Half Pant"/>
-                  <option value="Skirt"/>
-                  <option value="Blouse"/>
-                  <option value="Track Suit"/>
-                  <option value="Jacket"/>
-                  <option value="T-Shirt"/>
-                  <option value="Blazer"/>
-                  <option value="Salwar"/>
-                  <option value="Kurta"/>
-                  <option value="Tie"/>
-                  <option value="Belt"/>
-                  <option value="Socks"/>
-                </datalist>
+                <datalist id="garment-presets">{catalog.names.map(name=><option key={name} value={name}/>)}</datalist>
               </label>
 
               <label style={{fontSize:11,fontWeight:700,color:'#166534'}}>

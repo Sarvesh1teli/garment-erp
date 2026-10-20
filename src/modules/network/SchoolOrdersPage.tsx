@@ -1,11 +1,12 @@
 import { BulkOrderPanel } from '../../shared/BulkOrderPanel';
+import { ConnectionHistory } from '../../shared/ConnectionHistory';
 import type { BulkOrder } from '../../shared/bulkOrders';
 import type { School as LocalSchool } from '../../shared/types';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ClipboardList, Copy, RefreshCw, School, X } from "lucide-react";
-import { getStoredTenantId, useStoredState } from "../../shared/utils";
+import { useStoredState } from "../../shared/utils";
 
-const SCHOOL_ORDER_CLOUD_URL = "https://garment.telicampus.in";
+
 
 type Link = {
   id: string;
@@ -35,13 +36,15 @@ const showDate = (value?: string) =>
     ? new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString("en-IN")
     : "-";
 
-export function SchoolOrdersPage({schools}:{schools:LocalSchool[]}) {
+export function SchoolOrdersPage({schools,businessName}:{schools:LocalSchool[];businessName:string}) {
   const [bulkOrders]=useStoredState<BulkOrder[]>('garment-bulk-orders',[]);
   const [productionOrder,setProductionOrder]=useState<Order|null>(null);
   const [code, setCode] = useState("");
   const [links, setLinks] = useState<Link[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [tab, setTab] = useState<"orders" | "connections">("orders");
+  const [orderPage,setOrderPage]=useState(1);
+  const [orderPageSize,setOrderPageSize]=useState(5);
+  const [tab, setTab] = useState<"orders" | "connections" | "connection-history">("orders");
   const [status, setStatus] = useState("ALL");
   const [search, setSearch] = useState("");
   const [orderFrom,setOrderFrom] = useState("");
@@ -56,44 +59,37 @@ export function SchoolOrdersPage({schools}:{schools:LocalSchool[]}) {
   const [actionMessage, setActionMessage] = useState("");
   const [actionError, setActionError] = useState("");
   const actionAbort = useRef<AbortController | null>(null);
-  const headers = () => ({
-    "Content-Type": "application/json",
-    "X-Tenant-ID": getStoredTenantId(),
-  });
-  const request = async (path: string, options: RequestInit = {}) => {
-    const response = await fetch(`${SCHOOL_ORDER_CLOUD_URL}${path}`, {
-        ...options,
-        headers: { ...headers(), ...(options.headers || {}) },
-      }),
-      body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.message || "Request failed");
-    return body;
+  const request = async (path:string,options:RequestInit={}) => {
+    if(!window.threadflow?.garmentCloudRequest)throw Error('School connections require the updated desktop app with a private business identity.');
+    return window.threadflow.garmentCloudRequest(path,{method:options.method||'GET',body:typeof options.body==='string'?options.body:undefined,businessName});
   };
+  const syncLock=useRef(false),syncGeneration=useRef(0),alive=useRef(true);
+  const [lastSync,setLastSync]=useState('');
   const sync = async () => {
-    setBusy(true);
+    if(syncLock.current)return;syncLock.current=true;setBusy(true);const generation=syncGeneration.current;
+    const current=()=>alive.current&&generation===syncGeneration.current;
     try {
-      const [connection, linkList, orderList] = await Promise.all([
-        request("/api/garment/connection"),
-        request("/api/garment/school-links"),
-        request("/api/garment/school-orders"),
+      const results=await Promise.allSettled([
+        request('/api/garment/connection').then(r=>{if(current())setCode(r.data.connectionCode);}),
+        request('/api/garment/school-links').then(r=>{if(current())setLinks(r.data||[]);}),
+        request('/api/garment/school-orders').then(r=>{if(current())setOrders(r.data||[]);}),
       ]);
-      setCode(connection.data.connectionCode);
-      setLinks(linkList.data || []);
-      setOrders(orderList.data || []);
-    } catch (error) {
-      setNotice(
-        error instanceof Error ? error.message : "Unable to sync school orders",
-      );
-    } finally {
-      setBusy(false);
-    }
+      if(current()){
+        const failure=results.find(r=>r.status==='rejected');
+        if(failure?.status==='rejected')setNotice(failure.reason instanceof Error?failure.reason.message:'Unable to refresh school data.');
+        else setLastSync(new Date().toISOString());
+      }
+    }finally{if(current()){syncLock.current=false;setBusy(false);}}
   };
   useEffect(() => {
-    sync();
-    const timer = setInterval(sync, 60000);
-    return () => clearInterval(timer);
-  }, []);
-  const actLink = async (link: Link, action: "approve" | "reject") => {
+    alive.current=true;
+    void (async()=>{
+      try{const cached=await window.threadflow?.garmentCloudSnapshot?.();if(alive.current&&cached){if(cached.connection)setCode(cached.connection.connectionCode);if(cached.links)setLinks(cached.links);if(cached.orders)setOrders(cached.orders);if(cached.updatedAt)setLastSync(cached.updatedAt);}}catch{}
+      if(alive.current)void sync();
+    })();
+    const timer=setInterval(()=>void sync(),60000);
+    return()=>{alive.current=false;syncLock.current=false;syncGeneration.current++;clearInterval(timer);};
+  }, []);  const actLink = async (link: Link, action: "approve" | "reject") => {
     const reason =
       action === "reject"
         ? window.prompt(`Reason for rejecting ${link.schoolName}:`, "")
@@ -183,6 +179,11 @@ export function SchoolOrdersPage({schools}:{schools:LocalSchool[]}) {
       ),
     [orders, status, search, orderFrom, orderTo],
   );
+  const orderPageCount=Math.max(1,Math.ceil(filtered.length/orderPageSize));
+  const safeOrderPage=Math.min(orderPage,orderPageCount);
+  const visibleOrders=filtered.slice((safeOrderPage-1)*orderPageSize,safeOrderPage*orderPageSize);
+  useEffect(()=>{setOrderPage(1);},[status,search,orderFrom,orderTo,orderPageSize]);
+  useEffect(()=>{setOrderPage(page=>Math.min(page,orderPageCount));},[orderPageCount]);
   const submitted = orders.filter(
       (order) => order.status === "SUBMITTED",
     ).length,
@@ -191,19 +192,17 @@ export function SchoolOrdersPage({schools}:{schools:LocalSchool[]}) {
   return (
     <section className="content garment-school-orders">
       <div className="school-order-toolbar">
+        <details className="garment-business-manager"><summary>Manage Connection</summary><div className="garment-business-actions"><button className="outline" onClick={async()=>{try{if(await window.threadflow?.exportGarmentBusiness())setNotice('Private business link file saved. Keep it secret; use only on another computer belonging to this business.');}catch(e){setNotice(e instanceof Error?e.message:'Export failed');}}}>Link another computer: Export</button><button className="outline" onClick={async()=>{try{if(await window.threadflow?.importGarmentBusiness()){syncGeneration.current++;syncLock.current=false;setLastSync('');setCode('');setOrders([]);setLinks([]);setSelected(null);setProductionOrder(null);await sync();}}catch(e){setNotice(e instanceof Error?e.message:'Link failed');}}}>Use existing business: Import</button></div></details>
         <div className="garment-code">
           <span>GARMENT CONNECTION ID</span>
           <strong>{code || "Loading..."}</strong>
-          <button
-            onClick={() => {
-              navigator.clipboard.writeText(code);
-              setNotice("Connection ID copied.");
-            }}
+          <button className="outline connection-copy" disabled={!code} onClick={async()=>{try{await navigator.clipboard.writeText(code);setNotice("Connection ID copied.");}catch{setNotice("Unable to copy. Select and copy the connection ID.");}}}
           >
             <Copy /> Copy
           </button>
         </div>
       </div>
+      <p className="school-sync-status" role="status">{busy?"Refreshing in the background…":lastSync?`Last updated ${new Date(lastSync).toLocaleString("en-IN")}`:"Connecting to your garment business…"}</p>
       {notice && (
         <div className="school-notice closable">
           {notice}
@@ -233,32 +232,34 @@ export function SchoolOrdersPage({schools}:{schools:LocalSchool[]}) {
             </small>
           </span>
         </button>
+        <button className={tab==='connection-history'?'active':''} onClick={()=>setTab('connection-history')}><ClipboardList/><span>Connection History</span></button>
       </div>
+      {tab === "connection-history" && <><button className="outline" onClick={()=>setTab('connections')}>Back to School Connections</button><ConnectionHistory request={request}/></>}
       {tab === "orders" && (
         <>
-          <div className="metrics">
-            <div className="metric">
+          <div className="metrics school-order-summary">
+            <div className="metric summary-new">
               <div>
                 <span>New Orders</span>
                 <strong>{submitted}</strong>
                 <small>waiting for review</small>
               </div>
             </div>
-            <div className="metric">
+            <div className="metric summary-accepted">
               <div>
                 <span>Accepted</span>
                 <strong>{accepted}</strong>
                 <small>acknowledged</small>
               </div>
             </div>
-            <div className="metric">
+            <div className="metric summary-rejected">
               <div>
                 <span>Rejected</span>
                 <strong>{rejected}</strong>
                 <small>with reason</small>
               </div>
             </div>
-            <div className="metric">
+            <div className="metric summary-total">
               <div>
                 <span>Total Orders</span>
                 <strong>{orders.length}</strong>
@@ -309,7 +310,7 @@ export function SchoolOrdersPage({schools}:{schools:LocalSchool[]}) {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((order) => (
+                {visibleOrders.map((order) => (
                   <tr key={order.id}>
                     <td>
                       <strong>{order.orderNo}</strong>
@@ -356,6 +357,7 @@ export function SchoolOrdersPage({schools}:{schools:LocalSchool[]}) {
                 )}
               </tbody>
             </table>
+            <div className="table-footer paginated-footer"><span>Showing {filtered.length?(safeOrderPage-1)*orderPageSize+1:0}–{Math.min(safeOrderPage*orderPageSize,filtered.length)} of {filtered.length} orders</span><div className="pager"><label>Rows<select aria-label="School orders rows per page" value={orderPageSize} onChange={e=>setOrderPageSize(Number(e.target.value))}>{[5,10,20,50].map(size=><option key={size} value={size}>{size}</option>)}</select></label><button className="outline" disabled={safeOrderPage===1} onClick={()=>setOrderPage(page=>Math.max(1,page-1))}>Prev</button><span>Page {safeOrderPage} / {orderPageCount}</span><button className="outline" disabled={safeOrderPage===orderPageCount} onClick={()=>setOrderPage(page=>Math.min(orderPageCount,page+1))}>Next</button></div></div>
           </article>
         </>
       )}
@@ -396,18 +398,18 @@ export function SchoolOrdersPage({schools}:{schools:LocalSchool[]}) {
                   </td>
                   <td>
                     {link.status === "PENDING" ? (
-                      <div className="row-actions">
+                      <div className="connection-request-actions">
                         <button
-                          className="save-btn"
+                          className="connection-action connection-action-approve"
                           onClick={() => actLink(link, "approve")}
                         >
-                          <Check /> Approve
+                          <Check size={15} aria-hidden="true" /><span>Approve</span>
                         </button>
                         <button
-                          className="danger-btn"
+                          className="connection-action connection-action-reject"
                           onClick={() => actLink(link, "reject")}
                         >
-                          <X /> Reject
+                          <X size={15} aria-hidden="true" /><span>Reject</span>
                         </button>
                       </div>
                     ) : (
@@ -492,6 +494,7 @@ export function SchoolOrdersPage({schools}:{schools:LocalSchool[]}) {
                 {selected.rejectionReason}
               </div>
             )}
+            {selected.status!=='DRAFT'&&<div className="form-actions"><button className="outline" disabled={busy} onClick={async()=>{const message=window.prompt('Message to this school about '+selected.orderNo);if(!message?.trim())return;setBusy(true);try{await request(`/api/garment/school-orders/${selected.id}/message`,{method:'POST',signal:AbortSignal.timeout(15000),body:JSON.stringify({message:message.trim()})});setNotice('Message sent to school.');setSelected(null);}catch(e){setNotice(e instanceof Error?e.message:'Unable to send message');}finally{setBusy(false);}}}>Send message to school</button></div>}
             {selected.status!=='REJECTED'&&<div className="form-actions"><button className="primary" disabled={bulkOrders.some(o=>o.sourceOrderId===selected.id)} onClick={()=>setProductionOrder(selected)}>{bulkOrders.some(o=>o.sourceOrderId===selected.id)?'Added to Production':selected.status==='SUBMITTED'?'Accept & Add to Production':'Add to Production'}</button></div>}
             {selected.status === "SUBMITTED" && (
               <div className="form-actions">

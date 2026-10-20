@@ -7,7 +7,8 @@ export function getApiBaseUrl(): string {
   if (typeof window !== 'undefined') {
     const override = localStorage.getItem('garment_api_url_override');
     if (override && override.trim()) {
-      const normalized=override.trim().replace(/\/$/, '').replace(/\/api$/i, '');
+      let normalized=override.trim().replace(/\/$/, '').replace(/\/api$/i, '');
+      try{const url=new URL(normalized);if(url.hostname==='garment.telicampus.in'){url.hostname='garment.telisoftware.com';normalized=url.href.replace(/\/$/,'');}}catch{}
       if(normalized!==override.trim().replace(/\/$/, ''))localStorage.setItem('garment_api_url_override',normalized);
       return normalized;
     }
@@ -17,7 +18,7 @@ export function getApiBaseUrl(): string {
   }
   if (typeof window !== 'undefined' && window.location.protocol !== 'file:') {
     const isHttps = window.location.protocol === 'https:';
-    if (isHttps || window.location.hostname === 'garment.telicampus.in') {
+    if (isHttps || window.location.hostname === 'garment.telisoftware.com') {
       return `${window.location.protocol}//${window.location.hostname}`;
     }
     return `http://${window.location.hostname}:47831`;

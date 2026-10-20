@@ -26,3 +26,10 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+# Notification credentials and local configuration
+**/secrets/
+**/*service-account*.json
+.env.*.local
+
+**/.env.notifications
+.garment-*.sh

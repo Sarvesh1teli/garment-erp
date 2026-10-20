@@ -29,7 +29,7 @@ export function SaaSControlCenter({ onSignOut }: { onSignOut?: () => void }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [autoApprove,setAutoApprove]=useState(false);
   const [settingsBusy,setSettingsBusy]=useState(false);
-  const [driveConfig,setDriveConfig]=useState({clientId:'',clientSecret:'',redirectUri:'https://garment.telicampus.in/api/backups/google/callback',clientSecretConfigured:false,configured:false});
+  const [driveConfig,setDriveConfig]=useState({clientId:'',clientSecret:'',redirectUri:'https://garment.telisoftware.com/api/backups/google/callback',clientSecretConfigured:false,configured:false});
   const adminToken=()=>{try{return JSON.parse(localStorage.getItem('garment_session')||'{}').token||''}catch{return ''}};
 
   const selectTab = (tab: typeof activeTab) => {
@@ -372,7 +372,7 @@ export function SaaSControlCenter({ onSignOut }: { onSignOut?: () => void }) {
                       {/* 2. Location & Contact */}
                       <td style={{ padding: '12px 16px', color: '#334155' }}>
                         <div style={{ fontWeight: 600 }}>📞 {tenant.phone}</div>
-                        <div style={{ fontSize: 11, color: '#64748b' }}>{tenant.subdomain ? `${tenant.subdomain}.garment.telicampus.in` : 'N/A'}</div>
+                        <div style={{ fontSize: 11, color: '#64748b' }}>{tenant.subdomain ? `${tenant.subdomain}.garment.telisoftware.com` : 'N/A'}</div>
                       </td>
 
                       {/* 3. Administrator */}

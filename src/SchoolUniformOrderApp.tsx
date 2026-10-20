@@ -1,3 +1,6 @@
+import { SchoolNotifications } from './SchoolNotifications';
+import { ConnectionHistory } from './shared/ConnectionHistory';
+import { disableSchoolPush, setPushSchool } from './shared/schoolPushClient';
 import { useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
@@ -76,6 +79,14 @@ export function SchoolUniformOrderApp() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [connectionCode, setConnectionCode] = useState("");
+  const [supplierGarments,setSupplierGarments]=useState<string[]>([]);
+  useEffect(()=>{
+    setSupplierGarments([]);if(!token)return;let active=true;
+    const refresh=()=>{void api('/api/school/garment-types').then(result=>{if(active)setSupplierGarments((result.data||[]).map((row:{name:string})=>row.name));}).catch(()=>{});};
+    refresh();const timer=window.setInterval(refresh,30000);window.addEventListener('focus',refresh);
+    return()=>{active=false;window.clearInterval(timer);window.removeEventListener('focus',refresh);};
+  },[token,school?.garmentName,school?.connectionStatus]);
+  const [showConnectionHistory,setShowConnectionHistory]=useState(false);
   const [supplier, setSupplier] = useState<{
     businessName: string;
     contactPerson: string;
@@ -92,10 +103,12 @@ export function SchoolUniformOrderApp() {
   const [historyPageSize, setHistoryPageSize] = useState(10);
   const [viewOrder, setViewOrder] = useState<Order | null>(null);
   const [showDisconnect, setShowDisconnect] = useState(false);
+  const [legacyCount,setLegacyCount]=useState(0);
 
   const api = async (path: string, options: RequestInit = {}) => {
     const response = await fetch(`${API_BASE_URL}${path}`, {
       ...options,
+      signal:options.signal||AbortSignal.timeout(15000),
       headers: {
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -115,11 +128,13 @@ export function SchoolUniformOrderApp() {
   const load = async () => {
     if (!token) return;
     try {
-      const [me, list] = await Promise.all([
+      const [me, list, legacy] = await Promise.all([
         api("/api/school/me"),
         api("/api/school/orders"),
+        api("/api/school/legacy-orders"),
       ]);
       setSchool(me.data);
+      setLegacyCount(legacy.data?.count||0);
       setOrders(list.data || []);
     } catch (error) {
       setNotice(
@@ -130,6 +145,17 @@ export function SchoolUniformOrderApp() {
   useEffect(() => {
     load();
   }, [token]);
+  useEffect(()=>{
+    if(!token)return;
+    let active=true;
+    const refresh=()=>{if(document.visibilityState==='hidden')return;void api('/api/school/me').then(me=>{if(active)setSchool(me.data);}).catch(()=>{});};
+    window.addEventListener('focus',refresh);document.addEventListener('visibilitychange',refresh);
+    const timer=window.setInterval(refresh,30000);
+    return()=>{active=false;window.clearInterval(timer);window.removeEventListener('focus',refresh);document.removeEventListener('visibilitychange',refresh);};
+  },[token]);
+  useEffect(()=>{if(!token)void setPushSchool('').catch(()=>{});},[token]);
+  useEffect(()=>{const id=new URLSearchParams(window.location.search).get('order');if(id&&orders.length){const order=orders.find(o=>o.id===id);if(order){setViewOrder(order);setPage('history');const url=new URL(window.location.href);url.searchParams.delete('order');window.history.replaceState(null,'',url.href);}}},[orders]);
+  const openNotifiedOrder=async(id:string)=>{try{const b=await api('/api/school/orders');setOrders(b.data||[]);const order=(b.data as Order[]).find(o=>o.id===id);if(order){setViewOrder(order);setPage('history');}else setNotice('Order is unavailable for this school.');}catch{setNotice('Reconnect to view this order.');}};
   const saveSession = (nextToken: string, nextSchool: SchoolUser) => {
     localStorage.setItem(
       "school_uniform_session",
@@ -169,7 +195,8 @@ export function SchoolUniformOrderApp() {
       setBusy(false);
     }
   };
-  const logout = () => {
+  const logout = async () => {
+    try{await disableSchoolPush(api);}catch{}
     localStorage.removeItem("school_uniform_session");
     setToken("");
     setSchool(null);
@@ -521,13 +548,9 @@ export function SchoolUniformOrderApp() {
                         updateItem(index, "garmentType", e.target.value)
                       }
                     >
-                      <option>Shirt</option>
-                      <option>Half Pant</option>
-                      <option>Full Pant</option>
-                      <option>Track Suit</option>
-                      <option>Jacket</option>
-                      <option>Skirt</option>
-                      <option>Other</option>
+                      <option value="">Select garment</option>
+                      {item.garmentType&&!supplierGarments.includes(item.garmentType)&&<option value={item.garmentType}>{item.garmentType} (previous selection)</option>}
+                      {supplierGarments.map(name=><option key={name} value={name}>{name}</option>)}
                     </select>
                   </label>
                   <label>
@@ -662,6 +685,7 @@ export function SchoolUniformOrderApp() {
           </section>
         )}
         {viewOrder && <div className="school-history-modal-overlay" onClick={() => setViewOrder(null)}><section className="school-history-modal" onClick={(event) => event.stopPropagation()}><div className="school-history-modal-head"><div><h2>{viewOrder.orderNo}</h2><p>{school?.name} · Complete order details</p></div><button onClick={() => setViewOrder(null)}>Close</button></div><div className="school-order-meta"><span>Order date<b>{displayDate(viewOrder.orderDate)}</b></span><span>Required date<b>{displayDate(viewOrder.requiredDate)}</b></span><span>Total items<b>{viewOrder.items.length}</b></span><span>Total quantity<b>{viewOrder.totalQuantity}</b></span><span>Status<b><i className={`school-status ${viewOrder.status.toLowerCase()}`}>{viewOrder.status}</i></b></span><span>School notes<b>{viewOrder.notes || "-"}</b></span></div><div className="school-history-table-wrap"><table className="school-history-table"><thead><tr><th>Garment Type</th><th>Size</th><th>Quantity</th></tr></thead><tbody>{viewOrder.items.map((item, index) => <tr key={index}><td>{item.garmentType}</td><td>{item.size}</td><td><strong>{item.quantity}</strong></td></tr>)}</tbody></table></div>{viewOrder.garmentRemark && <div className="school-ack"><b>Garment acknowledgement</b>{viewOrder.garmentRemark}</div>}{viewOrder.rejectionReason && <div className="school-reject"><b>Rejection reason</b>{viewOrder.rejectionReason}</div>}{viewOrder.history?.length ? <div className="school-timeline"><h3>Order timeline</h3>{viewOrder.history.map((event) => <div key={event.id}><i /><span><b>{event.newStatus}</b>{event.remarks && `${event.remarks} · `}{event.performedBy && `${event.performedBy} · `}{new Date(event.createdAt).toLocaleString("en-IN")}</span></div>)}</div> : null}</section></div>}
+        {school?.id&&<SchoolNotifications token={token} schoolId={school.id} onOrder={id=>void openNotifiedOrder(id)}/>}
         {page === "profile" && (
           <section className="school-page-card">
             <div className="school-page-head">
@@ -670,7 +694,8 @@ export function SchoolUniformOrderApp() {
                 <p>Your school identity and garment connection.</p>
               </div>
             </div>
-            <div className="school-profile">
+            <div className="connection-history-filters"><button onClick={()=>setShowConnectionHistory(false)} disabled={!showConnectionHistory}>Current Connection</button><button onClick={()=>setShowConnectionHistory(true)} disabled={showConnectionHistory}>Connection History</button></div>
+            {!showConnectionHistory&&<><div className="school-profile">
               <span>
                 School Name<strong>{school?.name}</strong>
               </span>
@@ -685,13 +710,14 @@ export function SchoolUniformOrderApp() {
                 Garment Supplier<strong>{school?.garmentName || "-"}</strong>
               </span>
             </div>
-            {school?.connectionStatus === "APPROVED" && (
+            {legacyCount>0&&<div className="school-ack"><strong>{legacyCount} orders remain on the retired shared connection.</strong><p>Reconnect to your correct garment business using its new connection ID. Once approved, confirm below to transfer only your school's historical orders.</p>{school?.connectionStatus==='APPROVED'&&<button disabled={busy} onClick={async()=>{if(!window.confirm('Move your historical orders to your currently approved garment supplier? Confirm this is the correct business.'))return;setBusy(true);try{const result=await api('/api/school/legacy-orders/transfer',{method:'POST',body:JSON.stringify({confirm:true})});setNotice(result.message);await load();}catch(e){setNotice(e instanceof Error?e.message:'Transfer failed');}finally{setBusy(false);}}}>Confirm historical order transfer</button>}</div>}
+            {['APPROVED','PENDING'].includes(school?.connectionStatus||'') && (
               <div className="school-connected-actions">
-                <div><strong>Connected to {school.garmentName}</strong><span>Your existing orders and history will remain safe if you disconnect.</span></div>
+                <div><strong>{school?.connectionStatus==='PENDING'?'Awaiting approval from':'Connected to'} {school?.garmentName}</strong><span>Your existing orders and history will remain safe if you disconnect.</span></div>
                 <button onClick={() => setShowDisconnect(true)}><Unplug /> Disconnect & Connect Again</button>
               </div>
             )}
-            {school?.connectionStatus !== "APPROVED" && (
+            {!['APPROVED','PENDING'].includes(school?.connectionStatus||'') && (
               <div className="school-connect">
                 <h3>Connect Garment Supplier</h3>
                 <p>
@@ -725,6 +751,8 @@ export function SchoolUniformOrderApp() {
                 )}
               </div>
             )}
+            </>}
+            {showConnectionHistory&&<ConnectionHistory request={api} school/>}
           </section>
         )}
         {showDisconnect && (

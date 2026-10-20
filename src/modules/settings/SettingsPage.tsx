@@ -2,6 +2,7 @@ import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import { Building2, Boxes, Cloud, CreditCard, DatabaseBackup, Download, Link2, RotateCcw, Save, Settings, ShieldCheck, Unlink, Upload, Clock, FileText, Info, Eye, EyeOff, Copy, Check, X } from 'lucide-react';
 import { activateSubscription, connectGoogleDrive, createBackup, disconnectGoogleDrive, downloadBackup, downloadGoogleDriveBackup, getGoogleDriveBackupStatus, getSubscription, importBackup, listBackups, listGoogleDriveBackups, restoreBackup, restoreGoogleDriveBackup, runGoogleDriveBackup, runLocalBackup, saveGoogleDriveOAuth, saveGoogleDriveSchedule, type BackupManifest, type GoogleDriveBackupFile, type GoogleDriveBackupStatus, type SubscriptionInfo } from '../../shared/api';
 import { SaaSOnboardingModal } from '../saas/SaaSOnboardingModal';
+import { GarmentTypesMaster } from '../../shared/GarmentTypes';
 
 export type CompanySettings = {
   name: string;
@@ -47,7 +48,7 @@ const formatBackupDate = (dateVal: string | null | undefined) => {
 };
 
 export function SettingsPage({ company, setCompany, modules, setModules, moduleLabels }: SettingsPageProps) {
-  const [tab, setTab] = useState<'garment' | 'modules' | 'backup' | 'subscription'>('garment');
+  const [tab, setTab] = useState<'garment' | 'types' | 'modules' | 'backup' | 'subscription'>('garment');
   const [backupSubTab, setBackupSubTab] = useState<'automatic' | 'manual'>('automatic');
   const [showOAuthModal, setShowOAuthModal] = useState(false);
   const [oauthClientId, setOauthClientId] = useState('');
@@ -70,6 +71,7 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
 
   const [companyDraft, setCompanyDraft] = useState<CompanySettings>(company);
   const [savedMessage, setSavedMessage] = useState('');
+  const [savingCompany, setSavingCompany] = useState(false);
   const [backups, setBackups] = useState<BackupManifest[]>([]);
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupMessage, setBackupMessage] = useState('');
@@ -85,11 +87,11 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
   const [showSaaSModal, setShowSaaSModal] = useState(false);
   const [serverUrlMode, setServerUrlMode] = useState<'cloud' | 'local' | 'custom'>(() => {
     const current = localStorage.getItem('garment_api_url_override');
-    if (!current || current.includes('garment.telicampus.in')) return 'cloud';
+    if (!current || current.includes('garment.telisoftware.com')) return 'cloud';
     if (current.includes('127.0.0.1') || current.includes('localhost')) return 'local';
     return 'custom';
   });
-  const [customUrl, setCustomUrl] = useState(() => (localStorage.getItem('garment_api_url_override') || 'https://garment.telicampus.in').replace(/\/api\/?$/i,''));
+  const [customUrl, setCustomUrl] = useState(() => (localStorage.getItem('garment_api_url_override') || 'https://garment.telisoftware.com').replace(/\/api\/?$/i,''));
   const enabledCount = moduleLabels.filter(label => modules[label] !== false || lockedModules.has(label)).length;
 
   const loadDriveStatus = async () => {
@@ -134,17 +136,23 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
     setModules(current => ({ ...current, [label]: current[label] === false }));
   };
 
-  const saveCompany = () => {
-    setCompany(companyDraft);
+  const saveCompany = async () => {
+    const name=companyDraft.name.trim();
+    if(!name||name.length>120){setSavedMessage('Enter a garment name between 1 and 120 characters.');return;}
+    setSavingCompany(true);
+    setCompany({...companyDraft,name});
     if (serverUrlMode === 'cloud') {
-      localStorage.setItem('garment_api_url_override', 'https://garment.telicampus.in');
+      localStorage.setItem('garment_api_url_override', 'https://garment.telisoftware.com');
     } else if (serverUrlMode === 'local') {
       localStorage.setItem('garment_api_url_override', 'http://127.0.0.1:47831');
     } else {
       localStorage.setItem('garment_api_url_override', customUrl.trim().replace(/\/$/,'').replace(/\/api$/i,''));
     }
-    setSavedMessage('Saved');
-    window.setTimeout(() => setSavedMessage(''), 1800);
+    try{
+      const result=await window.threadflow?.syncGarmentBusinessName(name);
+      setSavedMessage(result?.synced?'Saved locally and to school portal':result?'Saved locally; school portal update queued until connected.':'Saved locally. Use the updated desktop app to sync the school portal name.');
+    }catch{setSavedMessage('Saved locally; unable to queue school portal update. Please save again.');}
+    finally{setSavingCompany(false);}
   };
 
   const uploadLogo = (file?: File) => {
@@ -355,6 +363,7 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
           <Building2 size={16} />
           <span>Garment Details<small>receipt information</small></span>
         </button>
+        <button className={tab === 'types' ? 'active' : ''} onClick={() => setTab('types')}><Boxes size={16}/><span>Garment Types<small>central master</small></span></button>
         <button className={tab === 'modules' ? 'active' : ''} onClick={() => setTab('modules')}>
           <Boxes size={16} />
           <span>Modules<small>{enabledCount} visible menus</small></span>
@@ -369,6 +378,7 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
         </button>
       </div>
 
+      {tab==='types'&&<GarmentTypesMaster/>}
       {tab === 'garment' && (
         <article className="card settings-panel">
           <div className="cardhead">
@@ -378,7 +388,7 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
             </div>
             <div className="settings-save">
               {savedMessage && <span>{savedMessage}</span>}
-              <button className="primary" onClick={saveCompany}><Save size={16} /> Save</button>
+              <button className="primary" disabled={savingCompany} onClick={saveCompany}><Save size={16} /> {savingCompany?'Saving…':'Save'}</button>
             </div>
           </div>
           <div className="settings-form">
@@ -398,11 +408,11 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
             <label className="wide">Address<textarea value={companyDraft.address} onChange={event => setCompanyDraft(current => ({ ...current, address: event.target.value }))} placeholder="Full address shown in receipt" /></label>
             <div style={{gridColumn:'1 / -1',marginTop:'12px',paddingTop:'16px',borderTop:'1px solid #dce8e4'}}>
               <h3 style={{fontSize:'14px',fontWeight:700,marginBottom:'4px',color:'#0b3f37'}}>Server Connection Mode & SaaS Portal</h3>
-              <p style={{fontSize:'12px',color:'#5f736d',marginBottom:'10px'}}>Configure whether ThreadFlow connects to the Cloud Server (https://garment.telicampus.in) or a Local Machine.</p>
+              <p style={{fontSize:'12px',color:'#5f736d',marginBottom:'10px'}}>Configure whether ThreadFlow connects to the Cloud Server (https://garment.telisoftware.com) or a Local Machine.</p>
               <div style={{display:'flex',gap:'16px',flexWrap:'wrap',alignItems:'center'}}>
                 <label style={{display:'inline-flex',alignItems:'center',gap:6,fontSize:13,fontWeight:600,cursor:'pointer'}}>
                   <input type="radio" name="serverMode" checked={serverUrlMode==='cloud'} onChange={()=>setServerUrlMode('cloud')}/>
-                  Cloud Server (https://garment.telicampus.in)
+                  Cloud Server (https://garment.telisoftware.com)
                 </label>
                 <label style={{display:'inline-flex',alignItems:'center',gap:6,fontSize:13,fontWeight:600,cursor:'pointer'}}>
                   <input type="radio" name="serverMode" checked={serverUrlMode==='local'} onChange={()=>setServerUrlMode('local')}/>

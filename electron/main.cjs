@@ -1,9 +1,10 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { startLocalApi } = require('./local-api.cjs');
 
 let mainWindow;
+require('./garment-cloud.cjs').setupGarmentCloud({app,ipcMain,dialog,safeStorage,getWindow:()=>mainWindow});
 const hasLock = app.requestSingleInstanceLock();
 if (!hasLock) {
   app.quit();
