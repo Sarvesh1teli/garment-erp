@@ -8,7 +8,26 @@ import { money, useStoredState, workTypeCode } from '../../shared/utils';
 const nameOf=(employees:Employee[],id:string)=>employees.find(e=>e.id===id)?.name||'-';
 const customerName=(customers:string[][],id:string)=>customers.find(c=>c[0]===id)?.[1]||'-';
 
-export function ReportsPage({employees,workTypes,advances,workEntries,assignments,customers,schools}:{employees:Employee[];workTypes:WorkType[];advances:AdvanceEntry[];workEntries:WorkEntry[];assignments:Assignment[];customers:string[][];schools:School[]}){
+type ReportsProps = {employees:Employee[];workTypes:WorkType[];advances:AdvanceEntry[];workEntries:WorkEntry[];assignments:Assignment[];customers:string[][];schools:School[]};
+
+export function ReportsPage(props: ReportsProps) {
+  const [unlocked, setUnlocked] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  if (unlocked) return <ReportsContent {...props} />;
+  return <section className="content"><article className="card" style={{maxWidth:420,margin:'40px auto',padding:24}}>
+    <h2>Reports access</h2><p>Enter your username and password to view reports.</p>
+    <form onSubmit={event => {event.preventDefault(); if (username === 'master' && password === 'master123@') {setPassword('');setUnlocked(true);} else {setError('Incorrect username or password.');setPassword('');}}}>
+      <label style={{display:'grid',gap:6,marginBottom:16}}>Username<input autoFocus autoComplete="off" value={username} onChange={event=>{setUsername(event.target.value);setError('');}} required /></label>
+      <label style={{display:'grid',gap:6,marginBottom:16}}>Password<input type="password" autoComplete="off" value={password} onChange={event=>{setPassword(event.target.value);setError('');}} required /></label>
+      {error && <p role="alert" style={{color:'#b91c1c'}}>{error}</p>}
+      <button type="submit" className="primary">View reports</button>
+    </form>
+  </article></section>;
+}
+
+function ReportsContent({employees,workTypes,advances,workEntries,assignments,customers,schools}:ReportsProps){
   const [tab,setTab]=useState<'overview'|'income'|'expense'|'staff'>('overview');
   const [year,setYear]=useState(()=>{const now=new Date();const y=now.getFullYear();return `${y}-${String((y+1)%100).padStart(2,'0')}`});
   const [from,setFrom]=useState(()=>{const now=new Date();return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`});
