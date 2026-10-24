@@ -1,3 +1,6 @@
+import { GeneralProduction } from './shared/GeneralProduction';
+import { CommerceProvider } from './shared/CommerceContext';
+import type { BusinessMode } from './shared/commerce';
 import { useEffect, useMemo, useState } from 'react';
 import { LayoutDashboard, Users, Scissors, ClipboardList, CalendarCheck, Boxes, ReceiptText, WalletCards, Truck, BarChart3, Settings, UserCog, ListChecks, Calculator, LogOut, MessageSquare, Network, Menu, X } from 'lucide-react';
 import { StaffManagement } from './modules/staff/StaffManagement';
@@ -30,7 +33,7 @@ type AppProps = {
 };
 
 export function App(props:AppProps){
-  return <GarmentTypesProvider><AppWorkspace {...props}/></GarmentTypesProvider>;
+  return <GarmentTypesProvider><CommerceProvider><AppWorkspace {...props}/></CommerceProvider></GarmentTypesProvider>;
 }
 
 function AppWorkspace({ currentUser, onLogout }: AppProps) {
@@ -62,7 +65,10 @@ function AppWorkspace({ currentUser, onLogout }: AppProps) {
   const [moduleSettings, setModuleSettings] = useStoredState<ModuleSettings>('garment-module-settings', defaultModuleSettings);
   const [garmentPrices, setGarmentPrices] = useStoredState<GarmentPrice[]>('garment-prices', defaultGarmentPrices);
 
-  const visibleNav = useMemo(() => nav.filter(([label]) => label === 'Dashboard' || label === 'Settings' || moduleSettings[label] !== false), [moduleSettings]);
+  const [businessMode]=useStoredState<BusinessMode>('garment-business-mode','both');
+  const [productionView,setProductionView]=useState<'general'|'school'>('school');
+  useEffect(()=>{if(businessMode==='shop')setProductionView('general');else if(navParams?.openSchool)setProductionView('school');},[businessMode,navParams]);
+  const visibleNav = useMemo(() => nav.filter(([label]) => label === 'Dashboard' || label === 'Settings' || (moduleSettings[label] !== false && (businessMode!=='shop'||label!=='School Orders'))), [moduleSettings,businessMode]);
 
   useEffect(() => {
     if (!visibleNav.some(([label]) => label === page)) setPage('Dashboard');
@@ -115,7 +121,7 @@ function AppWorkspace({ currentUser, onLogout }: AppProps) {
               key={label}
             >
               <Icon size={18} />
-              <span>{label}</span>
+              <span>{label==='Billing & Payments'?'Sales & Billing':label==='Customers & Schools'&&businessMode==='shop'?'Customers':label==='Measurements'&&businessMode==='shop'?'Orders & Measurements':label}</span>
             </button>
           ))}
         </nav>
@@ -143,17 +149,18 @@ function AppWorkspace({ currentUser, onLogout }: AppProps) {
         {page === 'Dashboard' ? <DashboardPage assignments={assignments} schools={schools} students={students} /> :
           page === 'School Orders' ? <SchoolOrdersPage schools={schools} businessName={companySettings.name} /> :
           page === 'SMS Gateway' ? <GatewaySettingsPage company={companySettings} /> :
-          page === 'Customers & Schools' ? <CustomersSchools key={`customers-${customerResetKey}`} company={companySettings} customers={customers} setCustomers={setCustomers} schools={schools} setSchools={setSchools} students={students} garmentPrices={garmentPrices} onNavigate={handleNavigate} navParams={navParams} /> :
+          page === 'Customers & Schools' ? <CustomersSchools businessMode={businessMode} key={`customers-${customerResetKey}`} company={companySettings} customers={customers} setCustomers={setCustomers} schools={schools} setSchools={setSchools} students={students} garmentPrices={garmentPrices} onNavigate={handleNavigate} navParams={navParams} /> :
+          page === 'Measurements' && businessMode==='shop' ? <GeneralProduction customers={customers} onInventory={()=>handleNavigate('Inventory')} /> :
           page === 'Measurements' ? <Measurements company={companySettings} schools={schools} students={students} setStudents={setStudents} /> :
-          page === 'Production' ? <CustomersSchools productionMode company={companySettings} customers={customers} setCustomers={setCustomers} schools={schools} setSchools={setSchools} students={students} garmentPrices={garmentPrices} onNavigate={handleNavigate} navParams={navParams} /> :
+          page === 'Production' ? <div className="production-workspace"><div className="content production-workspace-menu" style={{paddingBottom:0}}><div className="measurement-tabs wage-tabs"><button className={productionView==='general'?'active':''} onClick={()=>setProductionView('general')}>General / Customer Production</button>{businessMode!=='shop'&&<button className={productionView==='school'?'active':''} onClick={()=>setProductionView('school')}>School Production</button>}</div></div>{productionView==='general'?<GeneralProduction customers={customers} onInventory={()=>handleNavigate('Inventory')} />:<CustomersSchools productionMode company={companySettings} customers={customers} setCustomers={setCustomers} schools={schools} setSchools={setSchools} students={students} garmentPrices={garmentPrices} onNavigate={handleNavigate} navParams={navParams} />}</div> :
           page === 'Staff Management' ? <StaffManagement employees={employeeRecords} setEmployees={setEmployeeRecords} workTypes={workTypes} advances={advances} activeTab={staffTab} onTabChange={setStaffTab} /> :
           page === 'Work Assignment' ? <AssignmentsPage employees={employeeRecords} workTypes={workTypes} customers={customers} assignments={assignments} setAssignments={setAssignments} /> :
           page === 'Work Calculation / Salary' ? <WagePage employees={employeeRecords} workTypes={workTypes} setWorkTypes={setWorkTypes} advances={advances} setAdvances={setAdvances} workEntries={workEntries} setWorkEntries={setWorkEntries} workTypeHistory={workTypeHistory} setWorkTypeHistory={setWorkTypeHistory} salaryHistory={salaryHistory} setSalaryHistory={setSalaryHistory} attendance={attendance} company={companySettings} garmentPrices={garmentPrices} setGarmentPrices={setGarmentPrices} /> :
           page === 'Attendance' ? <AttendancePage employees={employeeRecords} attendance={attendance} setAttendance={setAttendance} company={companySettings} /> :
           page === 'Inventory' ? <InventoryPage company={companySettings} customers={customers} schools={schools} navParams={navParams} onNavigate={handleNavigate} /> :
-          page === 'Billing & Payments' ? <BillingPaymentsPage company={companySettings} customers={customers} schools={schools} students={students} navParams={navParams} onNavigate={handleNavigate} /> :
+          page === 'Billing & Payments' ? <BillingPaymentsPage businessMode={businessMode} company={companySettings} customers={customers} schools={schools} students={students} navParams={navParams} onNavigate={handleNavigate} /> :
           page === 'Expenses' ? <ExpensesPage /> :
-          page === 'Delivery' ? <DeliveryPage company={companySettings} customers={customers} /> :
+          page === 'Delivery' ? <DeliveryPage company={companySettings} customers={customers} schools={schools} onNavigate={handleNavigate} /> :
           page === 'Reports' ? <ReportsPage schools={schools} employees={employeeRecords} workTypes={workTypes} advances={advances} workEntries={workEntries} assignments={assignments} customers={customers} /> :
           page === 'Settings' ? <SettingsPage company={companySettings} setCompany={setCompanySettings} modules={moduleSettings} setModules={setModuleSettings} moduleLabels={moduleLabels} /> :
           <Placeholder title={page} />}

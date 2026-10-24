@@ -1,8 +1,12 @@
+import { readyBalances } from '../../shared/commerce';
+import type { BusinessMode } from '../../shared/commerce';
+import type { ProductionOrder } from '../../shared/GeneralProduction';
 import { useState } from 'react';
 import { Boxes, CheckCircle2, IndianRupee, ReceiptText } from 'lucide-react';
 import { buildIncomeEntries } from '../../shared/income';
 import { Stats, Table } from '../../shared/ui';
-import { money, useStoredState } from '../../shared/utils';
+import { money } from '../../shared/utils';
+import { useCommerceState, useCommerce } from '../../shared/CommerceContext';
 import type { Assignment, Invoice, InvoicePayment, SalaryPayment, School, SchoolStock, StockSale, Student } from '../../shared/types';
 
 const parseMoney = (value = '') => Number((value.match(/\d[\d,]*(?:\.\d+)?/)?.[0] || '0').replace(/,/g, ''));
@@ -10,42 +14,45 @@ const assignmentQty = (assignment: Assignment) => assignment.works.reduce((sum, 
 const assignmentDone = (assignment: Assignment) => assignment.works.reduce((sum, work) => sum + Math.min(work.done, work.qty), 0);
 
 export function DashboardPage({ assignments, schools, students }: { assignments: Assignment[]; schools: School[]; students: Student[] }) {
+  const commerce=useCommerce();
+  const [businessMode]=useCommerceState<BusinessMode>('garment-business-mode','both');
+  const [generalOrders]=useCommerceState<ProductionOrder[]>('garment-general-production',[]);
+  const [customers]=useCommerceState<string[][]>('garment-customers',[]);
   const [chartHover,setChartHover] = useState<'collection'|'expense'|null>(null);
   const now = new Date();
   const currentFyStart = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
   const [fy, setFy] = useState(`${currentFyStart}-${String((currentFyStart + 1) % 100).padStart(2, '0')}`);
   const [from, setFrom] = useState(`${currentFyStart}-04-01`);
   const [to, setTo] = useState(`${currentFyStart + 1}-03-31`);
-  const [invoices] = useStoredState<Invoice[]>('garment-invoices', []);
-  const [payments] = useStoredState<InvoicePayment[]>('garment-invoice-payments', []);
-  const [schoolStock] = useStoredState<SchoolStock[]>('garment-school-stock', []);
-  const [sales] = useStoredState<StockSale[]>('garment-stock-sales', []);
-  const [collections] = useStoredState<string[][]>('garment-school-collections', []);
-  const [expenses] = useStoredState<string[][]>('garment-expenses', []);
-  const [salaryHistory] = useStoredState<SalaryPayment[]>('garment-salary-history', []);
+  const [invoices] = useCommerceState<Invoice[]>('garment-invoices', []);
+  const [payments] = useCommerceState<InvoicePayment[]>('garment-invoice-payments', []);
+  const [schoolStock] = useCommerceState<SchoolStock[]>('garment-school-stock', []);
+  const [sales] = useCommerceState<StockSale[]>('garment-stock-sales', []);
+  const [collections] = useCommerceState<string[][]>('garment-school-collections', []);
+  const [expenses] = useCommerceState<string[][]>('garment-expenses', []);
+  const [salaryHistory] = useCommerceState<SalaryPayment[]>('garment-salary-history', []);
 
   const changeFy = (value: string) => { const year = Number(value.slice(0, 4)); setFy(value); setFrom(`${year}-04-01`); setTo(`${year + 1}-03-31`); };
   const inPeriod = (date?: string) => !!date && date >= from && date <= to;
   const periodInvoices = invoices.filter(invoice => inPeriod(invoice.invoiceDate));
   const periodPayments = payments.filter(payment => inPeriod(payment.date));
-  const periodSales = sales.filter(sale => inPeriod(sale.date));
+  const periodSales = sales.filter(sale => sale.fulfilment!=='reserved' && inPeriod(sale.date));
   const periodExpenses = expenses.filter(row => inPeriod(row[5]));
   const paidFor = (invoiceNo: string) => payments.filter(payment => payment.invoiceNo === invoiceNo).reduce((sum, payment) => sum + Number(payment.amount || 0) + Number(payment.discount || 0), 0);
-  const totalInvoiced = periodInvoices.reduce((sum, invoice) => sum + invoice.totalAmount, 0);
   const collectionEntries = buildIncomeEntries(invoices, payments, collections).filter(entry => inPeriod(entry.date));
   const totalCollected = collectionEntries.reduce((sum, entry) => sum + entry.amount, 0);
-  const totalDiscounted = periodPayments.reduce((sum, payment) => sum + Number(payment.discount || 0), 0);
+  const totalDiscounted = periodPayments.filter(payment=>payment.mode!=='Return credit').reduce((sum, payment) => sum + Number(payment.discount || 0), 0);
   const outstanding = periodInvoices.reduce((sum, invoice) => sum + Math.max(0, invoice.totalAmount - paidFor(invoice.invoiceNo)), 0);
   const periodSalaries = salaryHistory.filter(payment => inPeriod(payment.paidDate));
   const staffSalaryTotal = periodSalaries.reduce((sum, payment) => sum + payment.netPayable, 0);
   const expenseTotal = periodExpenses.reduce((sum, row) => sum + parseMoney(row[6]), 0) + staffSalaryTotal;
   const expenseEntryCount = periodExpenses.length + periodSalaries.length;
   const deliveredPieces = periodSales.reduce((sum, sale) => sum + Number(sale.count || 0), 0);
-  const readyPieces = schoolStock.reduce((sum, stock) => sum + Math.max(0, Number(stock.count || 0)), 0);
+  const readyPieces = commerce?readyBalances(commerce.schoolStock,commerce.customerStock,commerce.sales).reduce((sum,row)=>sum+row.available,0):schoolStock.reduce((sum, stock) => sum + Math.max(0, Number(stock.count || 0)), 0);
   const measuredStudents = students.filter(student => Object.values(student.sizes || {}).some(Boolean)).length;
   const activeSchools = schools.filter(school => school.status === 'Active').length;
-  const assignedPieces = assignments.reduce((sum, assignment) => sum + assignmentQty(assignment), 0);
-  const completedPieces = assignments.reduce((sum, assignment) => sum + assignmentDone(assignment), 0);
+  const assignedPieces = assignments.reduce((sum, assignment) => sum + assignmentQty(assignment), 0)+(businessMode==='shop'?generalOrders.reduce((sum,order)=>sum+order.lines.reduce((sum,row)=>sum+row.quantity,0),0):0);
+  const completedPieces = assignments.reduce((sum, assignment) => sum + assignmentDone(assignment), 0)+(businessMode==='shop'?generalOrders.reduce((sum,order)=>sum+order.lines.reduce((sum,row)=>sum+row.done,0),0):0);
   const productionPct = assignedPieces ? Math.round(completedPieces / assignedPieces * 100) : 0;
   const pendingInvoices = periodInvoices.filter(invoice => Math.max(0, invoice.totalAmount - paidFor(invoice.invoiceNo)) > 0);
 
@@ -64,8 +71,8 @@ export function DashboardPage({ assignments, schools, students }: { assignments:
 
   return <section className="content dashboard-page business-dashboard">
     <div className="dashboard-heading"><div><span>BUSINESS OVERVIEW</span><h1>Garment ERP Dashboard</h1><p>Orders, production, stock, delivery and payment position at a glance.</p></div><div className="filterbar salary-filter yearwise-filter"><label>Financial Year<select value={fy} onChange={event => changeFy(event.target.value)}><option>{`${currentFyStart}-${String((currentFyStart + 1) % 100).padStart(2, '0')}`}</option><option>{`${currentFyStart - 1}-${String(currentFyStart % 100).padStart(2, '0')}`}</option></select></label><label>From<input type="date" value={from} onChange={event => setFrom(event.target.value)} /></label><label>To<input type="date" value={to} onChange={event => setTo(event.target.value)} /></label></div></div>
-    <Stats values={[["Active Schools", String(activeSchools), `${schools.length} total schools`], ["Students Measured", String(measuredStudents), `${students.length} student records`], ["Ready Stock", `${readyPieces} Pcs`, "available for delivery"], ["Pending Production", `${Math.max(0, assignedPieces - completedPieces)} Pcs`, `${productionPct}% work completed`]]} />
-    <Stats className="discount-summary-metrics" values={[["Total Invoiced", money(totalInvoiced), `${periodInvoices.length} invoices`], ["Cash Collected", money(totalCollected), `${collectionEntries.length} receipts`], ["Discounted", money(totalDiscounted), "settlement discounts / waivers"], ["Outstanding Due", money(outstanding), `${pendingInvoices.length} pending invoices`], ["Expenses", money(expenseTotal), `${expenseEntryCount} entries, including ${periodSalaries.length} salary payments`]]} />
+    <Stats values={[[businessMode==='shop'?"Customers":"Active Schools", String(businessMode==='shop'?customers.filter(row=>(row[5]||'Active')==='Active').length:activeSchools), businessMode==='shop'?"registered customers; walk-ins need no registration":`${schools.length} total schools`], [businessMode==='shop'?"Production Orders":"Students Measured", String(businessMode==='shop'?generalOrders.length:measuredStudents), businessMode==='shop'?"general and customer orders":`${students.length} student records`], ["Ready Stock", `${readyPieces} Pcs`, "available for delivery"], ["Pending Production", `${Math.max(0, assignedPieces - completedPieces)} Pcs`, `${productionPct}% work completed`]]} />
+    <Stats values={[["Discounted", money(totalDiscounted), "settlement discounts / waivers"], ["Outstanding Due", money(outstanding), `${pendingInvoices.length} pending invoices`], ["Expenses", money(expenseTotal), `${expenseEntryCount} entries, including ${periodSalaries.length} salary payments`]]} />
     <div className="dashboard-summary-grid">
     <article className="card dashboard-finance-chart">
       <div className="cardhead"><div><h2>Total collection &amp; expenses</h2><p>Cash collected and expenses in the selected period</p></div></div>
@@ -83,7 +90,7 @@ export function DashboardPage({ assignments, schools, students }: { assignments:
     </article>
       <article className="card dashboard-alert-card"><div className="cardhead"><div><h2>Attention required</h2><p>Items needing follow-up</p></div></div><div className="activityrow"><div className="dot amber"><ReceiptText /></div><div><strong>{pendingInvoices.length} invoices</strong><span>Payment collection pending</span></div><b className="warn">{money(outstanding)}</b></div><div className="activityrow"><div className="dot blue"><Boxes /></div><div><strong>{Math.max(0, assignedPieces - completedPieces)} pieces</strong><span>Production work pending</span></div><b>{productionPct}% done</b></div><div className="activityrow"><div className="dot green"><CheckCircle2 /></div><div><strong>{readyPieces} pieces</strong><span>Ready stock available</span></div><b>{deliveredPieces} delivered</b></div><div className="activityrow"><div className="dot amber"><IndianRupee /></div><div><strong>{money(expenseTotal)}</strong><span>Expenses in selected period</span></div><b>{expenseEntryCount} entries</b></div></article>
     </div>
-    <Table title="School-wise status" copy="Students, deliveries, billing and outstanding amount" headers={['SCHOOL', 'STUDENTS', 'MEASURED', 'DELIVERED', 'INVOICED', 'DUE', 'STATUS']} rows={schoolRows} paged />
+    {businessMode==='shop'&&commerce?<Table title="Ready garment availability" copy="Available stock after sales and reservations" headers={['STOCK FOR','GARMENT','SIZE','ON HAND','RESERVED','AVAILABLE']} rows={readyBalances(commerce.schoolStock,commerce.customerStock,commerce.sales).map(row=>[row.party||'General Stock',row.garment,row.size,String(row.physical),String(row.reserved),String(row.available)])} paged/>:<Table title="School-wise status" copy="Students, deliveries, billing and outstanding amount" headers={['SCHOOL', 'STUDENTS', 'MEASURED', 'DELIVERED', 'INVOICED', 'DUE', 'STATUS']} rows={schoolRows} paged />}
 
   </section>;
 }

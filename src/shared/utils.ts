@@ -80,8 +80,10 @@ function publishState<T>(key:string,value:T){
   stateListeners.get(key)?.forEach(listener=>listener(value));
 }
 
+const retailSaveQueues=new Map<string,Promise<void>>();
 async function saveState<T>(key:string,value:T){
   const tenantId = getStoredTenantId();
+  const write=async()=>{
   try {
     const response=await fetch(stateEndpoint(key),{
       method:'PUT',
@@ -93,10 +95,20 @@ async function saveState<T>(key:string,value:T){
     console.warn(`Backend state save error for ${key}:`, err);
     throw err;
   }
+  };
+  if(key!=='garment-retail-ledger')return write();
+  const queued=(retailSaveQueues.get(tenantId)||Promise.resolve()).catch(()=>{}).then(write);
+  retailSaveQueues.set(tenantId,queued);return queued;
 }
 
 export function useStoredState<T>(key:string,initialValue:T){
+  const pendingRetailKey=()=>`garment_retail_pending_${getStoredTenantId()}`;
+  const readPendingRetail=()=>{
+    if(key!=='garment-retail-ledger'||typeof window==='undefined')return null;
+    try{return localStorage.getItem(pendingRetailKey());}catch{return null;}
+  };
   const [value,setValue]=useState<T>(()=>{
+    const pending=readPendingRetail();if(pending){try{return JSON.parse(pending) as T;}catch{}}
     const tenantId = getStoredTenantId();
     const cacheKey = `${tenantId}:${key}`;
     if (stateCache.has(cacheKey)) return stateCache.get(cacheKey) as T;
@@ -115,7 +127,7 @@ export function useStoredState<T>(key:string,initialValue:T){
     return initialValue;
   });
   const latest=useRef(value);
-  const changedLocally=useRef(false);
+  const changedLocally=useRef(Boolean(readPendingRetail()));
   latest.current=value;
 
   useEffect(()=>{
@@ -135,7 +147,12 @@ export function useStoredState<T>(key:string,initialValue:T){
   useEffect(()=>{
     let active=true;
     const tenantId = getStoredTenantId();
-    const loadCloudState=()=>fetch(stateEndpoint(key), {headers: { 'X-Tenant-ID': tenantId }})
+    const flushPendingRetail=async()=>{
+      const pending=readPendingRetail();if(!pending)return;
+      await saveState(key,JSON.parse(pending) as T);
+      if(readPendingRetail()===pending){localStorage.removeItem(pendingRetailKey());changedLocally.current=false;}
+    };
+    const loadCloudState=()=>{const readValue=latest.current;return flushPendingRetail().then(()=>fetch(stateEndpoint(key), {headers: { 'X-Tenant-ID': tenantId }}))
       .then(async response=>{
         if(response.status===404)return null;
         if(!response.ok)throw new Error(`Unable to load ${key}`);
@@ -144,9 +161,9 @@ export function useStoredState<T>(key:string,initialValue:T){
       })
       .then(data=>{
         if(!active || !data)return;
-        if(!changedLocally.current)publishState(key,data);
+        if(!changedLocally.current&&(key!=='garment-retail-ledger'||latest.current===readValue))publishState(key,data);
       })
-      .catch(console.error);
+      .catch(console.error);};
     loadCloudState();
     const onFocus=()=>loadCloudState();
     const onVisibility=()=>{if(document.visibilityState==='visible')loadCloudState()};
@@ -159,10 +176,17 @@ export function useStoredState<T>(key:string,initialValue:T){
   const updateValue=useCallback<Dispatch<SetStateAction<T>>>(update=>{
     changedLocally.current=true;
     const next=typeof update==='function'?(update as (current:T)=>T)(latest.current):update;
+    if(key==='garment-retail-ledger'&&typeof window!=='undefined')localStorage.setItem(pendingRetailKey(),JSON.stringify(next));
     latest.current=next;
     publishState(key,next);
     const onError=(error:unknown)=>{console.error(`Unable to save ${key}:`,error);};
-    saveState(key,next).then(()=>{changedLocally.current=false}).catch(onError);
+    saveState(key,next).then(()=>{
+      if(key==='garment-retail-ledger'&&typeof window!=='undefined'){
+        if(readPendingRetail()!==JSON.stringify(next))return;
+        localStorage.removeItem(pendingRetailKey());
+      }
+      changedLocally.current=false;
+    }).catch(onError);
   },[key]);
 
   return [value,updateValue] as const;

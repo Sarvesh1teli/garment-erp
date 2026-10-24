@@ -1,3 +1,5 @@
+import { schoolCashReceipts } from '../../shared/paymentReceipts';
+import type { BusinessMode } from '../../shared/commerce';
 import type { BulkOrder } from '../../shared/bulkOrders';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
@@ -6,7 +8,8 @@ import { Table } from '../../shared/ui';
 import type { DressVersion, GarmentPrice, Invoice, InvoiceItem, InvoicePayment, School, SchoolStock, StockSale, Student } from '../../shared/types';
 import { assetUrl, uploadSchoolMedia } from '../../shared/api';
 import { defaultGarmentPrices } from '../../shared/defaults';
-import { consolidateStockSales, money, useStoredState } from '../../shared/utils';
+import { consolidateStockSales, money } from '../../shared/utils';
+import { useCommerceState, useCommerce } from '../../shared/CommerceContext';
 import { SmsComposerModal, type SmsDraft } from '../../shared/SmsComposerModal';
 import { sendSmsViaGateway } from '../../shared/sms';
 import type { CompanySettings } from '../settings/SettingsPage';
@@ -36,14 +39,15 @@ const activeDress=(school:School):DressVersion=>{
   return active?{...active,boysPhotos:Array.isArray(active.boysPhotos)?active.boysPhotos:[],girlsPhotos:Array.isArray(active.girlsPhotos)?active.girlsPhotos:[]}:emptyDressVersion();
 };
 
-export function CustomersSchools({customers,setCustomers,schools,setSchools,students=[],onNavigate,navParams,productionMode=false,company,garmentPrices:propGarmentPrices}:{customers:string[][];setCustomers:React.Dispatch<React.SetStateAction<string[][]>>;schools:School[];setSchools:React.Dispatch<React.SetStateAction<School[]>>;students?:Student[];onNavigate?:(page:string,params?:Record<string,unknown>)=>void;navParams?:Record<string,unknown>|null;productionMode?:boolean;company?:CompanySettings;garmentPrices?:GarmentPrice[]}){
+export function CustomersSchools({customers,setCustomers,schools,setSchools,students=[],onNavigate,navParams,productionMode=false,company,garmentPrices:propGarmentPrices,businessMode='both'}:{businessMode?:BusinessMode;customers:string[][];setCustomers:React.Dispatch<React.SetStateAction<string[][]>>;schools:School[];setSchools:React.Dispatch<React.SetStateAction<School[]>>;students?:Student[];onNavigate?:(page:string,params?:Record<string,unknown>)=>void;navParams?:Record<string,unknown>|null;productionMode?:boolean;company?:CompanySettings;garmentPrices?:GarmentPrice[]}){
+  const commerce=useCommerce();
   const nextSchoolId=()=>{const max=schools.reduce((m,s)=>{const match=s.id.match(/SCH-(\d+)$/);return match?Math.max(m,Number(match[1])):m},0);return `SCH-${String(max+1).padStart(3,'0')}`};
   const [tab,setTab]=useState<'customers'|'schools'>(()=>{
     if(navParams?.tab==='schools') return 'schools';
     if(navParams?.tab==='customers') return 'customers';
-    return 'schools';
+    return businessMode==='shop'?'customers':'schools';
   });
-  const [storedGarmentPrices]=useStoredState<GarmentPrice[]>('garment-prices',defaultGarmentPrices);
+  const [storedGarmentPrices]=useCommerceState<GarmentPrice[]>('garment-prices',defaultGarmentPrices);
   const garmentPrices=propGarmentPrices??storedGarmentPrices;
   const [smsDraft,setSmsDraft]=useState<SmsDraft|null>(null);
   const [sendingSms,setSendingSms]=useState(false);
@@ -91,8 +95,8 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
       }
     }
   },[navParams?.openSchool,schools,productionMode,viewSchool?.name]);
-  const [schoolStock,setSchoolStock]=useStoredState<SchoolStock[]>('garment-school-stock',[]);
-  const [schoolSales,setSchoolSales]=useStoredState<StockSale[]>('garment-stock-sales',[]);
+  const [schoolStock,setSchoolStock]=useCommerceState<SchoolStock[]>('garment-school-stock',[]);
+  const [schoolSales,setSchoolSales]=useCommerceState<StockSale[]>('garment-stock-sales',[]);
   useEffect(() => {
     if (schoolSales.length > 1) {
       const seen = new Set<string>();
@@ -109,9 +113,9 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
       }
     }
   }, [schoolSales, setSchoolSales]);
-  const [schoolCollections]=useStoredState<string[][]>('garment-school-collections',[]);
-  const [invoices,setInvoices]=useStoredState<Invoice[]>('garment-invoices',[]);
-  const [payments,setPayments]=useStoredState<InvoicePayment[]>('garment-invoice-payments',[]);
+  const [schoolCollections]=useCommerceState<string[][]>('garment-school-collections',[]);
+  const [invoices,setInvoices]=useCommerceState<Invoice[]>('garment-invoices',[]);
+  const [payments,setPayments]=useCommerceState<InvoicePayment[]>('garment-invoice-payments',[]);
   const [autoAdjustAdvance,setAutoAdjustAdvance]=useState(true);
   const [selectedSummaryRow,setSelectedSummaryRow]=useState<{year?:string;gender?:string;garment:string;size:string}|null>(null);
   const [selectedRowKeys,setSelectedRowKeys]=useState<Set<string>>(new Set());
@@ -175,7 +179,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
   useEffect(()=>{const close=()=>setMenuPos(null);window.addEventListener('click',close);return()=>window.removeEventListener('click',close)},[]);
 
 
-  const [bulkOrders]=useStoredState<BulkOrder[]>('garment-bulk-orders',[]);
+  const [bulkOrders]=useCommerceState<BulkOrder[]>('garment-bulk-orders',[]);
   const computeProductSummary = useCallback((schoolName: string) => {
     const reqMap=new Map<string,{year:string;gender:string;garment:string;size:string;qty:number}>();
     (students||[]).filter(st=>st.school===schoolName).forEach(st=>{
@@ -207,7 +211,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
     });
 
     const deliveredTotalsMap=new Map<string,number>();
-    schoolSales.filter(s=>s.type==='School'&&s.party===schoolName).forEach(s=>{
+    schoolSales.filter(s=>s.fulfilment!=='reserved'&&s.type==='School'&&s.party===schoolName).forEach(s=>{
       if (s.items && s.items.length > 0) {
         s.items.forEach(it => {
           const gender = it.gender || s.gender || 'Boys';
@@ -564,6 +568,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
   };
 
   const openDeliverAllReadyStockModal=()=>{
+    if(commerce&&onNavigate&&viewSchool){const deliveryItems=productSummary.filter(r=>r.ready>0).map(r=>({garment:r.garment,size:r.size,gender:r.gender,quantity:r.ready,rate:getGarmentMasterPrice(r.garment,r.size)}));if(!deliveryItems.length){setToast('No ready stock available to deliver.');return;}onNavigate('Billing & Payments',{tab:'quick',school:viewSchool.name,deliveryItems,fromSchool:viewSchool.name,fromPage:productionMode?'Production':'Customers & Schools'});return;}
     if(!viewSchool)return;
     const readyStockRows = productSummary.filter(r => r.ready > 0);
     if (!readyStockRows.length) {
@@ -592,7 +597,8 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
     setShowMultiDeliverModal(true);
   };
 
-  const openMultiDeliverStockModal=()=>{
+  const openMultiDeliverStockModal=(deliveryRows=selectedRowsList)=>{
+    if(commerce&&onNavigate&&viewSchool){const deliveryItems=deliveryRows.map(r=>({garment:r.garment,size:r.size,gender:r.gender,quantity:r.ready,rate:getGarmentMasterPrice(r.garment,r.size)}));if(!deliveryItems.length){setToast('No ready stock available to deliver.');return;}onNavigate('Billing & Payments',{tab:'quick',school:viewSchool.name,deliveryItems,fromSchool:viewSchool.name,fromPage:productionMode?'Production':'Customers & Schools'});return;}
     if(!selectedRowsList.length)return;
     const initialData:Record<string,{deliverQty:number;rate:number}>={};
     selectedRowsList.forEach(r=>{
@@ -767,27 +773,22 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
   const schoolDeliveredTotal=useMemo(()=>{
     if(!viewSchool)return 0;
     return schoolSales
-      .filter(s=>s.type==='School'&&s.party===viewSchool.name)
+      .filter(s=>s.type==='School'&&s.party===viewSchool.name&&s.fulfilment!=='reserved')
       .reduce((sum,s)=>sum+s.total,0);
   },[viewSchool,schoolSales]);
 
+  const schoolReceiptRows=useMemo(()=>schoolCashReceipts(payments,schoolCollections,schools.map(school=>school.name)).map(receipt=>[receipt.number,receipt.date,receipt.school,receipt.mode,money(receipt.amount),receipt.remarks]),[payments,schoolCollections,schools]);
   const schoolCollectedTotal=useMemo(()=>{
     if(!viewSchool)return 0;
-    return schoolCollections
-      .filter(c=>c[2]===viewSchool.name)
-      .reduce((sum,c)=>{
-        const match=(c[4]||'').match(/\d[\d,]*(?:\.\d+)?/);
-        const val=match?Number(match[0].replace(/,/g,'')):0;
-        return sum+val;
-      },0);
-  },[viewSchool,schoolCollections]);
+    return schoolCashReceipts(payments,schoolCollections,[viewSchool.name]).filter(receipt=>receipt.school===viewSchool.name).reduce((sum,receipt)=>sum+receipt.amount,0);
+  },[viewSchool,payments,schoolCollections]);
 
   const schoolDiscountedTotal=useMemo(()=>{
     if(!viewSchool)return 0;
     const invoiceNos=new Set(invoices.filter(invoice=>invoice.customer===viewSchool.name).map(invoice=>invoice.invoiceNo));
-    return payments.filter(payment=>payment.customer===viewSchool.name||invoiceNos.has(payment.invoiceNo)).reduce((sum,payment)=>sum+Number(payment.discount||0),0);
+    return payments.filter(payment=>payment.mode!=='Return credit'&&(payment.customer===viewSchool.name||invoiceNos.has(payment.invoiceNo))).reduce((sum,payment)=>sum+Number(payment.discount||0),0);
   },[viewSchool,invoices,payments]);
-  const schoolPendingBalance=Math.max(0,schoolDeliveredTotal-schoolCollectedTotal-schoolDiscountedTotal);
+  const schoolPendingBalance=viewSchool?invoices.filter(invoice=>invoice.customer===viewSchool.name&&invoice.totalAmount>0).reduce((sum,invoice)=>sum+Math.max(0,invoice.totalAmount-payments.filter(payment=>payment.invoiceNo===invoice.invoiceNo).reduce((paid,payment)=>paid+Number(payment.amount||0)+Number(payment.discount||0),0)),0):0;
   const schoolAdvanceBalance=Math.max(0,schoolCollectedTotal+schoolDiscountedTotal-schoolDeliveredTotal);
 
   const selectedRowBreakdown=useMemo(()=>{
@@ -881,7 +882,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
     return <div className="action-menu"><button className="action-menu-btn" title="Actions" onClick={e=>{e.stopPropagation();if(open){setMenuPos(null)}else{const r=(e.currentTarget as HTMLElement).getBoundingClientRect();setMenuPos({key:rowKey,x:Math.min(r.right-132,window.innerWidth-150),y:r.bottom+5})}}}>⋯</button>{open&&<div className="action-menu-drop" style={{left:menuPos.x,top:menuPos.y}} onClick={e=>e.stopPropagation()}><button onClick={()=>{onView();setMenuPos(null)}}><Eye size={14}/> View</button><button onClick={()=>{onEdit();setMenuPos(null)}}><Pencil size={14}/> Edit</button><button className="danger" onClick={()=>{onDelete();setMenuPos(null)}}><Trash2 size={14}/> Delete</button></div>}</div>;
   };
   return <section className="content">
-    {!productionMode&&<nav className="customer-school-tabs" aria-label="Customers and schools"><button type="button" className={tab==='schools'?'active':''} aria-current={tab==='schools'?'page':undefined} onClick={()=>setTab('schools')}><Factory size={15}/><span>Schools</span><small>{schools.length}</small></button><button type="button" className={tab==='customers'?'active':''} aria-current={tab==='customers'?'page':undefined} onClick={()=>setTab('customers')}><Users size={15}/><span>Customers</span><small>{customers.length}</small></button></nav>}
+    {!productionMode&&<nav className="customer-school-tabs" aria-label="Customers and schools">{businessMode!=='shop'&&<button type="button" className={tab==='schools'?'active':''} aria-current={tab==='schools'?'page':undefined} onClick={()=>setTab('schools')}><Factory size={15}/><span>Schools</span><small>{schools.length}</small></button>}<button type="button" className={tab==='customers'?'active':''} aria-current={tab==='customers'?'page':undefined} onClick={()=>setTab('customers')}><Users size={15}/><span>Customers</span><small>{customers.length}</small></button></nav>}
     {tab==='customers'&&<><div className="filterbar salary-filter"><label>Search<input value={customerSearch} onChange={e=>setCustomerSearch(e.target.value)} placeholder="Zudio, Redflame, phone"/></label><label>Type<select value={customerType} onChange={e=>setCustomerType(e.target.value)}><option>All</option><option>Retail</option><option>Corporate</option></select></label><label>Status<select value={customerStatus} onChange={e=>setCustomerStatus(e.target.value)}><option>All</option><option>Active</option><option>Inactive</option></select></label><button className="primary" onClick={()=>{setEditCustomerId(null);setCustomerForm({name:'',type:'Retail',phone:'',location:'',status:'Active'});setShowCustomerForm(true)}}><Plus size={16}/> Add customer</button></div>{showCustomerForm&&<div className="stock-modal-overlay" onClick={closeCustomerForm}><article className="card measurement-form entry-modal" onClick={e=>e.stopPropagation()}><div className="form-title"><div><h2>{editCustomerId?'Edit customer':'Add customer'}</h2><p>Create retail or corporate customer details.</p></div><button className="outline" onClick={closeCustomerForm}>Close</button></div><div className="form-grid"><label>Customer name<input value={customerForm.name} onChange={e=>setCustomerForm({...customerForm,name:e.target.value})} placeholder="Zudio, Redflame"/></label><label>Type<select value={customerForm.type} onChange={e=>setCustomerForm({...customerForm,type:e.target.value})}><option>Retail</option><option>Corporate</option></select></label><label>Phone<input value={customerForm.phone} onChange={e=>setCustomerForm({...customerForm,phone:e.target.value})} placeholder="Mobile / phone"/></label><label>Location<input value={customerForm.location} onChange={e=>setCustomerForm({...customerForm,location:e.target.value})} placeholder="City or area"/></label><label>Status<select value={customerForm.status} onChange={e=>setCustomerForm({...customerForm,status:e.target.value})}><option>Active</option><option>Inactive</option></select></label></div><div className="form-actions"><button className="outline" onClick={closeCustomerForm}>Cancel</button><button className="primary" onClick={saveCustomer}><Plus size={16}/> {editCustomerId?'Update customer':'Save customer'}</button></div></article></div>}<Table title="Customer list" copy="Customer records used for orders and billing" headers={['CUSTOMER ID','CUSTOMER','TYPE','PHONE','LOCATION','STATUS']} rows={customerRows} actions={r=><ActionMenu rowKey={'cus-'+r[0]} onView={()=>setViewCustomer(r)} onEdit={()=>startEditCustomer(r)} onDelete={()=>deleteCustomer(r[0])}/>}/>{viewCustomer&&<div className="stock-modal-overlay" onClick={()=>setViewCustomer(null)}><div className="card detail-modal" onClick={e=>e.stopPropagation()}><div className="cardhead"><div><h2>{viewCustomer[1]}</h2><p>{viewCustomer[0]} · Customer details</p></div><button className="outline" onClick={()=>setViewCustomer(null)}>Close</button></div><div className="detail-grid"><div><span>Customer ID</span><strong>{viewCustomer[0]}</strong></div><div><span>Type</span><strong>{viewCustomer[2]}</strong></div><div><span>Phone</span><strong>{viewCustomer[3]}</strong></div><div><span>Location</span><strong>{viewCustomer[4]}</strong></div><div><span>Status</span><strong>{viewCustomer[5]}</strong></div></div></div></div>}</>}
     {tab==='schools'&&<>
       {!productionMode&&<>
@@ -982,7 +983,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
             </div>
             <div style={{display:'flex',gap:6,flexWrap:'nowrap',alignItems:'center',marginBottom:4,whiteSpace:'nowrap',overflowX:'auto'}}>
               <button className="primary" style={{whiteSpace:'nowrap',padding:'6px 12px',fontSize:12,background:selectedRowKeys.size>0?'#10b981':undefined,borderColor:selectedRowKeys.size>0?'#059669':undefined}} title={selectedRowKeys.size>0?`Add ready stock for ${selectedRowKeys.size} selected items`:'Add Ready Stock'} onClick={()=>{if(selectedRowKeys.size>0){openMultiAddStockModal()}else{const name=viewSchool.name;setViewSchool(null);lastOpenedSchoolRef.current=null;onNavigate?.('Inventory',{stockView:'ready',party:name,fromSchool:name,fromPage:productionMode?'Production':'Customers & Schools'})}}}><Plus size={14}/> Add Stock{selectedRowKeys.size>0?` (${selectedRowKeys.size})`:''}</button>
-              <button className="primary" style={{background:'#0284c7',borderColor:'#0284c7',whiteSpace:'nowrap',padding:'6px 12px',fontSize:12}} title={selectedRowKeys.size>0?`Deliver stock for ${selectedRowKeys.size} selected items`:'Deliver Stock (Partial/Full)'} onClick={()=>{if(selectedRowKeys.size>0){openMultiDeliverStockModal()}else{const name=viewSchool.name;setViewSchool(null);lastOpenedSchoolRef.current=null;onNavigate?.('Inventory',{stockView:'out',outTab:'school',party:name,fromSchool:name,fromPage:productionMode?'Production':'Customers & Schools'})}}}><Truck size={14}/> Deliver Stock{selectedRowKeys.size>0?` (${selectedRowKeys.size})`:''}</button>
+              <button className="primary" style={{background:'#0284c7',borderColor:'#0284c7',whiteSpace:'nowrap',padding:'6px 12px',fontSize:12}} title={selectedRowKeys.size>0?`Deliver stock for ${selectedRowKeys.size} selected items`:'Deliver Stock (Partial/Full)'} onClick={()=>{if(selectedRowKeys.size>0){openMultiDeliverStockModal()}else{openDeliverAllReadyStockModal()}}}><Truck size={14}/> Deliver Stock{selectedRowKeys.size>0?` (${selectedRowKeys.size})`:''}</button>
               <button className="outline" style={{whiteSpace:'nowrap',padding:'6px 12px',fontSize:12}} title="Collect Payment" onClick={()=>{const name=viewSchool.name;setViewSchool(null);lastOpenedSchoolRef.current=null;onNavigate?.('Billing & Payments',{tab:'school',school:name,fromSchool:name,fromPage:productionMode?'Production':'Customers & Schools'})}}><CreditCard size={14}/> Payment</button>
               <button className="outline" style={{whiteSpace:'nowrap',padding:'6px 12px',fontSize:12}} title="Send SMS" onClick={()=>openProductionSms(viewSchool)}><MessageSquare size={14}/> SMS</button>
             </div>
@@ -1257,7 +1258,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
                       type="button"
                       className="primary"
                       style={{ background: '#0284c7', borderColor: '#0284c7', fontSize: 12, padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 6 }}
-                      onClick={openMultiDeliverStockModal}
+                      onClick={()=>openMultiDeliverStockModal()}
                     >
                       <Truck size={14} /> Deliver Stock ({selectedRowKeys.size})
                     </button>
@@ -2367,7 +2368,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
                                   onClick={() => {
                                     setSelectedRowKeys(new Set([`${r.year}||${r.gender}||${r.garment}||${r.size}`]));
                                     setActiveMetricModal(null);
-                                    setTimeout(() => openMultiDeliverStockModal(), 50);
+                                    openMultiDeliverStockModal([r]);
                                   }}
                                   title="Deliver this item"
                                 >
@@ -2718,7 +2719,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
 
             {/* 6. COLLECTED MODAL */}
             {activeMetricModal === 'collected' && (() => {
-              const schoolCollectionsList = schoolCollections.filter(c => c[2] === viewSchool.name);
+              const schoolCollectionsList = schoolReceiptRows.filter(c => c[2] === viewSchool.name);
               const q = metricModalSearch.toLowerCase().trim();
               const filteredCollections = schoolCollectionsList.filter(c => {
                 if (!q) return true;
@@ -2947,7 +2948,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
         const grossBilledTotal = schoolInvoices.reduce((sum, inv) => sum + (Number(inv.grossAmount) || (Number(inv.taxableAmount || 0) + (Number(inv.discount) || 0))), 0);
         const upfrontDiscountTotal = schoolInvoices.reduce((sum, inv) => sum + (Number(inv.discount) || 0), 0);
         const netBilledTotal = schoolInvoices.reduce((sum, inv) => sum + (Number(inv.totalAmount) || 0), 0);
-        const cashCollectedTotal = schoolPaymentsList.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+        const cashCollectedTotal = schoolPaymentsList.filter(p=>p.mode!=='Return credit').reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
         const settlementDiscountsTotal = schoolPaymentsList.reduce((sum, p) => sum + (Number(p.discount) || 0), 0);
         const totalSettledAmount = cashCollectedTotal + settlementDiscountsTotal;
         const netBalanceOutstanding = Math.max(0, netBilledTotal - totalSettledAmount);

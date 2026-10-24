@@ -1,7 +1,7 @@
 ﻿import { useEffect, useState } from "react";
 import { CheckCircle2, Globe, MessageSquare, Phone, Plus, RefreshCw, Send, Settings, Trash2, Wifi, WifiOff } from "lucide-react";
 import { sendSmsViaGateway, formatSalarySms, formatStockOutSms, formatPaymentReceiptSms, formatOrderStatusSms, type SmsLanguage } from "../../shared/sms";
-import { API_BASE_URL, getStoredTenantId } from "../../shared/utils";
+import { garmentSmsRequest } from "../../shared/garmentSmsApi";
 import type { CompanySettings } from "./SettingsPage";
 
 type SmsContact = { schoolCode: string; phone: string };
@@ -11,6 +11,10 @@ type GatewayDevice = { id: string; deviceName: string; mobileNumber?: string; st
 type SmsSettings = {
   enabled: boolean;
   organizationCode: string;
+  cloudUrl?: string;
+  installationId?: string;
+  language?: SmsLanguage;
+  autoInvoice?: boolean;
   deviceKeyConfigured: boolean;
   devices: GatewayDevice[];
   contacts: Record<string, string>;
@@ -43,9 +47,7 @@ export function GatewaySettingsPage({company}:{company:CompanySettings}) {
 
   async function fetchSettings() {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/sms-settings`, { headers: { "X-Tenant-ID": getStoredTenantId() } });
-      if (!res.ok) throw new Error("Unable to load gateway settings");
-      const data: SmsSettings = await res.json();
+      const data: SmsSettings = await garmentSmsRequest('/api/v1/sms-settings');
       setSettings(data);
       setContacts(
         Object.entries(data.contacts || {}).map(([schoolCode, phone]) => ({
@@ -53,21 +55,20 @@ export function GatewaySettingsPage({company}:{company:CompanySettings}) {
           phone: phone as string,
         }))
       );
-    } catch { /* offline */ }
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Unable to load SMS settings."); }
   }
 
   async function saveSettings(patch: Partial<SmsSettings>) {
     setSaving(true);
     try {
-      await fetch(`${API_BASE_URL}/api/v1/sms-settings`, {
+      await garmentSmsRequest("/api/v1/sms-settings", {
         method: "PUT",
-        headers: { "Content-Type": "application/json", "X-Tenant-ID": getStoredTenantId() },
         body: JSON.stringify(patch),
       });
       await fetchSettings();
       setNotice("Settings saved successfully!");
-    } catch {
-      setNotice("Failed to save - is the API server running?");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to save SMS settings.");
     } finally {
       setSaving(false);
     }
@@ -97,14 +98,12 @@ export function GatewaySettingsPage({company}:{company:CompanySettings}) {
   }
 
   async function handleGenerateDeviceKey() {
-    if (settings?.deviceKeyConfigured && !window.confirm("Generate a new key? Phones will need the new key the next time they sign in.")) return;
+
     setSaving(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/sms-gateway/key`, { method: "POST", headers: { "X-Tenant-ID": getStoredTenantId() } });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Could not generate key");
+      const data = await garmentSmsRequest('/api/v1/sms-gateway/key', {method:'POST'});
       setDeviceKey(data.deviceKey);
-      setNotice("New reusable device key generated. Copy it now and use it on any gateway phone.");
+      setNotice("One-time pairing code generated. Use it on one phone within 10 minutes.");
       await fetchSettings();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not generate key");
@@ -113,7 +112,7 @@ export function GatewaySettingsPage({company}:{company:CompanySettings}) {
 
   async function revokeDevice(id: string) {
     if (!window.confirm("Revoke this phone? Other phones using the same key will continue working.")) return;
-    await fetch(`${API_BASE_URL}/api/v1/sms-gateway/devices/${encodeURIComponent(id)}/revoke`, { method: "POST", headers: { "X-Tenant-ID": getStoredTenantId() } });
+    await garmentSmsRequest(`/api/v1/sms-gateway/devices/${encodeURIComponent(id)}/revoke`, {method:"POST"});
     await fetchSettings();
   }
 
@@ -194,7 +193,7 @@ export function GatewaySettingsPage({company}:{company:CompanySettings}) {
         referenceType: quickTemplate,
       });
       if (res.ok) {
-        setNotice(`📱 SMS queued successfully in ${quickLang.toUpperCase()} for ${quickPhone} via TeliGateway!`);
+        setNotice(`📱 SMS queued successfully in ${quickLang.toUpperCase()} for ${quickPhone} via Garment SMS Gateway!`);
         await fetchSettings();
       } else {
         setNotice(`❌ Failed to send SMS: ${res.message}`);
@@ -208,7 +207,7 @@ export function GatewaySettingsPage({company}:{company:CompanySettings}) {
   const latestSeen = activeDevices.map(device => new Date(device.lastSeenAt).getTime()).filter(Number.isFinite).sort((a, b) => b - a)[0];
   const isOnline = !!latestSeen && Date.now() - latestSeen < 60000;
   const lastSeen = latestSeen ? new Date(latestSeen).toLocaleString() : "Never";
-  const statusColor = (s: string) => ({ PENDING: "#f59e0b", SENT: "#10b981", FAILED: "#ef4444" }[s] || "#94a3b8");
+  const statusColor = (s: string) => ({ PENDING: "#f59e0b", QUEUED: "#f59e0b", IN_PROGRESS: "#3b82f6", SUBMITTED: "#10b981", SENT: "#10b981", FAILED: "#ef4444", UNKNOWN: "#b45309" }[s] || "#94a3b8");
 
   const triggerEvents = [
     { key: "Accepted", label: "Order Accepted", desc: "Factory accepted the order" },
@@ -228,7 +227,7 @@ export function GatewaySettingsPage({company}:{company:CompanySettings}) {
             <div>
               <h2 style={{ margin: 0, fontSize: 18, color: "#fff", fontWeight: 800 }}>SMS Gateway & Multi-Language Dispatcher</h2>
               <p style={{ margin: "2px 0 0", opacity: 0.9, fontSize: 12 }}>
-                TeliGateway SIM SMS integration • English, ಕನ್ನಡ (Kannada), and Bilingual Support
+                Garment SMS Gateway SIM SMS integration • English, ಕನ್ನಡ (Kannada), and Bilingual Support
               </p>
             </div>
           </div>
@@ -346,7 +345,7 @@ export function GatewaySettingsPage({company}:{company:CompanySettings}) {
               }}
             >
               <Send size={15} />
-              {sendingQuickSms ? "Queueing..." : "Send SMS via TeliGateway"}
+              {sendingQuickSms ? "Queueing..." : "Send SMS via Garment SMS Gateway"}
             </button>
           </div>
         </form>
@@ -372,7 +371,7 @@ export function GatewaySettingsPage({company}:{company:CompanySettings}) {
               <span style={{ fontWeight: 600 }}>{lastSeen}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#64748b" }}>Sent Today</span>
+              <span style={{ color: "#64748b" }}>Submitted Today</span>
               <span style={{ fontWeight: 700, color: "#007c68" }}>{settings?.sentToday || 0} SMS</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
@@ -392,19 +391,19 @@ export function GatewaySettingsPage({company}:{company:CompanySettings}) {
             </div>
             <div>
               <label style={{ fontSize: 12, fontWeight: 700, color: "#475569", display: "block", marginBottom: 4 }}>
-                Reusable Device Key
+                One-time Phone Pairing Code
               </label>
               <div style={{ display: "flex", gap: 6 }}>
                 <input
-                  value={deviceKey || (settings?.deviceKeyConfigured ? "Key already generated" : "No key generated")}
+                  value={deviceKey || (settings?.deviceKeyConfigured ? "Create a fresh pairing code" : "No key generated")}
                   readOnly
                   style={{ flex: 1, border: "1px solid #cbd5e1", borderRadius: 6, padding: "4px 8px", fontSize: 12, fontFamily: "monospace" }}
                 />
                 <button onClick={handleGenerateDeviceKey} disabled={saving} style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, background: "#007c68", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}>
-                  {settings?.deviceKeyConfigured ? "Rotate" : "Generate"}
+                  {settings?.deviceKeyConfigured ? "Pair Another Phone" : "Register & Pair"}
                 </button>
               </div>
-              <small style={{ color: "#64748b" }}>The same key can register multiple phones. The key is shown only when generated.</small>
+              <small style={{ color: "#64748b" }}>Each code pairs one phone and expires in 10 minutes. Generate another code for each additional phone.</small>
             </div>
             {activeDevices.length > 0 && <div style={{ display: "grid", gap: 6, marginTop: 4 }}>
               <strong style={{ fontSize: 12 }}>Registered phones</strong>
@@ -555,7 +554,7 @@ export function GatewaySettingsPage({company}:{company:CompanySettings}) {
                   </td>
                   <td style={{ padding: "8px 14px" }}>
                     <span style={{ fontWeight: 700, fontSize: 12, color: statusColor(job.status) }}>
-                      {job.status === "SENT" ? "✅ SENT" : job.status === "FAILED" ? "❌ FAILED" : "⏳ PENDING"}
+                      {job.status.replace(/_/g," ")}
                     </span>
                   </td>
                   <td style={{ padding: "8px 14px" }}>
@@ -570,16 +569,22 @@ export function GatewaySettingsPage({company}:{company:CompanySettings}) {
         </div>
       </div>
 
+      <div className="card" style={{padding:16,display:'grid',gap:10}}>
+        <strong>Automatic invoice SMS</strong>
+        <label><input type="checkbox" checked={Boolean(settings?.autoInvoice)} onChange={event=>saveSettings({autoInvoice:event.target.checked})}/> Queue SMS when a new invoice is saved (valid customer mobile required)</label>
+        <label>Default language <select value={settings?.language||'english'} onChange={event=>saveSettings({language:event.target.value as SmsLanguage})}><option value="english">English</option><option value="kannada">Kannada</option><option value="both">Both</option></select></label>
+        <small>Desktop ID: {settings?.installationId||'—'} · Independent SMS server: grm-bill-sms.telisoftware.com. Submitted means sent to the phone SIM API, not delivery confirmed.</small>
+      </div>
       {/* How to Connect Instructions */}
       <div className="card" style={{ padding: 16, background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
         <strong style={{ display: "block", marginBottom: 8, color: "#0b3f37", fontSize: 13 }}>
-          📱 How to Connect ThreadFlow Gateway App
+          📱 How to Connect Garment SMS Gateway App
         </strong>
         <ol style={{ margin: 0, paddingLeft: 18, color: "#475569", lineHeight: 2, fontSize: 13 }}>
-          <li>Install <code>threadflow-gateway.apk</code> on any Android phone with an active SIM card.</li>
-          <li>Open the app and enter <strong>ERP Backend URL</strong>: <code>http://YOUR_IP:47831</code> or <code>https://garment.telisoftware.com</code></li>
+          <li>Install <code>garment-sms-gateway.apk</code> on any Android phone with an active SIM card.</li>
+          <li>Open the app and enter <strong>SMS Server URL</strong>: <code>https://grm-bill-sms.telisoftware.com</code></li>
           <li>Enter the <strong>Organization Code</strong> shown above.</li>
-          <li>Enter <strong>Device Key</strong>: the key shown above in Device Status panel</li>
+          <li>Enter app code <strong>GARMENTERP</strong> and the one-time pairing code shown above</li>
           <li>Tap <strong>Connect</strong>, then tap <strong>Start</strong> - the phone will now send SMS in English, Kannada, or Both automatically!</li>
         </ol>
       </div>

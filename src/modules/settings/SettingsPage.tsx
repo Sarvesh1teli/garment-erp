@@ -3,6 +3,8 @@ import { Building2, Boxes, Cloud, CreditCard, DatabaseBackup, Download, Link2, R
 import { activateSubscription, connectGoogleDrive, createBackup, disconnectGoogleDrive, downloadBackup, downloadGoogleDriveBackup, getGoogleDriveBackupStatus, getSubscription, importBackup, listBackups, listGoogleDriveBackups, restoreBackup, restoreGoogleDriveBackup, runGoogleDriveBackup, runLocalBackup, saveGoogleDriveOAuth, saveGoogleDriveSchedule, type BackupManifest, type GoogleDriveBackupFile, type GoogleDriveBackupStatus, type SubscriptionInfo } from '../../shared/api';
 import { SaaSOnboardingModal } from '../saas/SaaSOnboardingModal';
 import { GarmentTypesMaster } from '../../shared/GarmentTypes';
+import { useStoredState } from '../../shared/utils';
+import type { BusinessMode } from '../../shared/commerce';
 
 export type CompanySettings = {
   name: string;
@@ -48,6 +50,7 @@ const formatBackupDate = (dateVal: string | null | undefined) => {
 };
 
 export function SettingsPage({ company, setCompany, modules, setModules, moduleLabels }: SettingsPageProps) {
+  const [businessMode,setBusinessMode]=useStoredState<BusinessMode>('garment-business-mode','both');
   const [tab, setTab] = useState<'garment' | 'types' | 'modules' | 'backup' | 'subscription'>('garment');
   const [backupSubTab, setBackupSubTab] = useState<'automatic' | 'manual'>('automatic');
   const [showOAuthModal, setShowOAuthModal] = useState(false);
@@ -392,6 +395,7 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
             </div>
           </div>
           <div className="settings-form">
+            <label>Business type<select value={businessMode} onChange={event=>setBusinessMode(event.target.value as BusinessMode)}><option value="both">Both — garment shop and school uniforms</option><option value="shop">Garment Shop</option><option value="school">School Uniform Business</option></select><small>Applies immediately. Changes menu visibility only; existing stock, schools and bills are retained.</small></label>
             <label className="logo-upload">Garment logo
               <input type="file" accept="image/*" onChange={event => uploadLogo(event.target.files?.[0])} />
               <span>{companyDraft.logo ? 'Logo selected' : 'Upload logo for receipts and print'}</span>

@@ -1,0 +1,23 @@
+[Unit]
+Description=Independent Teli Garment SMS queue
+After=network.target
+
+[Service]
+User=teli-garment-sms
+Group=teli-garment-sms
+WorkingDirectory=/opt/teli-garment-sms/current
+Environment=BILLING_SMS_DB=/var/lib/teli-garment-sms/queue.sqlite
+ExecStart=/opt/teli-garment-sms/venv/bin/gunicorn --workers 1 --threads 4 --bind 127.0.0.1:8792 --access-logfile - --error-logfile - server:application
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/teli-garment-sms
+MemoryMax=128M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

@@ -1,3 +1,4 @@
+const { createGarmentSmsRelay } = require('./garment-sms-relay.cjs');
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
@@ -1707,15 +1708,18 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     },
   };
 
+  let garmentRelay;
   function replaceDomain(domain, values, tenantId = 'default') {
     if (!Array.isArray(values)) throw new Error('Domain payload must be an array');
     database.exec('BEGIN IMMEDIATE');
     try {
+      const previous = domain.legacyKey === 'garment-invoices' ? domain.fromRows(domain.select.all(tenantId), tenantId) : [];
       domain.clear.run(tenantId);
       for (const value of values) domain.insert.run(...domain.insertRow(value, tenantId));
       const legacyKey = tenantId === 'default' ? domain.legacyKey : `${tenantId}:${domain.legacyKey}`;
       deleteState.run(legacyKey);
       saveState.run(`domain-initialized:${legacyKey}`, 'true');
+      if (garmentRelay && domain.legacyKey === 'garment-invoices') garmentRelay.automaticInvoices(tenantId, previous, values);
       database.exec('COMMIT');
     } catch (error) {
       database.exec('ROLLBACK');
@@ -1835,7 +1839,8 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     return getSmsSettings();
   }
 
-  function enqueueSms(job) {
+  function enqueueSms(job, tenant = 'default') {
+    if (garmentRelay) return garmentRelay.enqueue(tenant,job);
     smsJobInsert.run(job.id,job.recipientName||'',job.recipientPhone,job.message,job.referenceType||'manual',job.referenceId||'',0,'PENDING');
   }
 
@@ -1843,12 +1848,45 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     return { id:r.id, recipientName:r.recipient_name, recipientPhone:r.recipient_phone, message:r.message, referenceType:r.reference_type, referenceId:r.reference_id, attempts:Number(r.attempts), status:r.status, createdAt:r.created_at };
   }
 
+  garmentRelay = createGarmentSmsRelay({ database, dataDirectory,
+    subscriptionActive: () => subscriptionView()?.status === 'Active',
+    companyName: tenant => findCompanySettings.get(tenant)?.name || 'Garment business',
+    legacySettings: getSmsSettings });
   ensureMasterUser();
   ensureOwnerUser();
   const server = http.createServer(async (request, response) => {
     try {
       if (request.method === 'OPTIONS') return json(response, 204, null);
     const url = new URL(request.url || '/', `http://${request.headers.host || '127.0.0.1'}`);
+    if (url.pathname.startsWith('/api/v1/gateway/')) return json(response,410,{message:'Use the separate Garment SMS Gateway at https://grm-bill-sms.telisoftware.com'});
+    if (url.pathname === '/api/v1/sms-settings' || url.pathname.startsWith('/api/v1/sms-gateway/') || url.pathname === '/api/v1/sms/send') {
+      const tenant = getTenantId(request);
+      try {
+        if (url.pathname === '/api/v1/sms-settings') {
+          if(request.method==='GET') {
+            const data=garmentRelay.settings(tenant);
+            try{data.devices=await garmentRelay.devices(tenant);data.lastHeartbeat=data.devices.filter(d=>d.status==='ACTIVE').map(d=>d.lastSeenAt).sort().pop()||null;}catch{}
+            return json(response,200,data);
+          }
+          if(request.method==='PUT') return json(response,200,{settings:garmentRelay.update(tenant,await readJson(request))});
+        }
+        if(url.pathname==='/api/v1/sms-gateway/register'&&request.method==='POST') return json(response,200,await garmentRelay.register(tenant));
+        if(url.pathname==='/api/v1/sms-gateway/key'&&request.method==='POST') {
+          if(subscriptionView()?.status!=='Active')throw new Error('An active subscription is required.');
+          let row=garmentRelay.get(tenant);if(!row.code){await garmentRelay.register(tenant);row=garmentRelay.get(tenant);}
+          const result=await garmentRelay.cloud(row,'/pairings',{deviceName:'Garment SMS Phone'});
+          return json(response,200,{deviceKey:result.pairingCode,expiresAt:result.expiresAt,organizationCode:result.shopCode});
+        }
+        if(url.pathname==='/api/v1/sms-gateway/devices'&&request.method==='GET')return json(response,200,{devices:await garmentRelay.devices(tenant)});
+        const revoke=url.pathname.match(/^\/api\/v1\/sms-gateway\/devices\/([^/]+)\/revoke$/);
+        if(revoke&&request.method==='POST')return json(response,200,await garmentRelay.cloud(garmentRelay.get(tenant),'/devices/'+encodeURIComponent(decodeURIComponent(revoke[1]))+'/revoke',{}));
+        if(url.pathname==='/api/v1/sms/send'&&request.method==='POST') {
+          const job=garmentRelay.enqueue(tenant,await readJson(request));
+          return json(response,200,{status:'queued',job,message:job.alreadyQueued?'SMS already queued or submitted; no duplicate created.':'SMS saved to the garment cloud outbox. It will send when the paired phone is online.'});
+        }
+        return json(response,404,{error:'SMS route not found'});
+      } catch(error) {return json(response,400,{error:error.message,message:error.message});}
+    }
     if (url.pathname === '/api/v1/school-connections/requests' && request.method === 'POST') {
       try {
         const body = await readJson(request);
@@ -2133,9 +2171,9 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
         }
 
         // ── SMS Gateway Job Enqueue ──────────────────────────────────────────
-        const smsConf = getSmsSettings();
+        const smsConf = garmentRelay.settings(getTenantId(request));
         if (order && smsConf.enabled && smsConf.triggers[order.status]) {
-          const phone = smsConf.contacts[order.schoolCode] || smsConf.contacts['SCH-56191'];
+          const phone = smsConf.contacts[order.schoolCode];
           if (phone) {
             const templates = {
               Accepted:   `Dear ${order.schoolName}, Uniform Order #${order.orderNo || order.schoolOrderId} (${order.totalItemsCount} pcs) has been ACCEPTED by Teli Apparels. Target Delivery: ${order.requiredDeliveryDate}. - Teli Apparels`,
@@ -2144,7 +2182,7 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
               Delivered:  `Dear ${order.schoolName}, Uniform Order #${order.orderNo || order.schoolOrderId} has been DELIVERED. Please verify item counts. Thank you! - Teli Apparels`,
               Cancelled:  `Dear ${order.schoolName}, Uniform Order #${order.orderNo || order.schoolOrderId} was REJECTED by Teli Apparels. Reason: ${body.remarks || 'No remarks'}. - Teli Apparels`,
             };
-            enqueueSms({ id: `sms_${order.id}_${order.status}_${Date.now()}`, recipientName: `${order.schoolName} Admin`, recipientPhone: phone, message: templates[order.status] || `Order ${order.orderNo || order.schoolOrderId} status: ${order.status}`, referenceType: 'uniform_order', referenceId: order.id });
+            enqueueSms({ id: `sms_${order.id}_${order.status}_${Date.now()}`, recipientName: `${order.schoolName} Admin`, recipientPhone: phone, message: templates[order.status] || `Order ${order.orderNo || order.schoolOrderId} status: ${order.status}`, referenceType: 'uniform_order', referenceId: `${order.id}:${order.status}` }, getTenantId(request));
           }
         }
         // ────────────────────────────────────────────────────────────────────
@@ -2816,7 +2854,16 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     if (request.method === 'PUT') {
       try {
         const payload = await readJson(request);
-        saveState.run(stateKey, JSON.stringify(payload));
+        if(key === 'garment-retail-ledger' && Array.isArray(payload)) {
+          const old=findState.get(stateKey);
+          const before=old ? JSON.parse(old.payload_json) : [];
+          database.exec('BEGIN IMMEDIATE');
+          try {
+            saveState.run(stateKey,JSON.stringify(payload));
+            garmentRelay.automaticInvoices(tenantId,Array.isArray(before)?before.map(s=>s.invoice).filter(Boolean):[],payload.map(s=>s.invoice).filter(Boolean));
+            database.exec('COMMIT');
+          } catch(error) {database.exec('ROLLBACK');throw error;}
+        } else saveState.run(stateKey, JSON.stringify(payload));
         const row = findState.get(stateKey);
         return json(response, 200, {
           data: JSON.parse(row.payload_json),
@@ -2835,6 +2882,7 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     }
   });
 
+  server.once('close', () => garmentRelay.close());
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, '0.0.0.0', () => resolve({ server, database, port }));

@@ -147,7 +147,7 @@ export function Measurements({company,schools,students,setStudents}:{company:Com
   useEffect(()=>{if(studentPage>studentPageCount)setStudentPage(studentPageCount)},[studentPage,studentPageCount]);
   useEffect(()=>{setSummarySizePage(1)},[summarySchool,summaryClass,summarySection,summaryGender,summaryGarment,summaryYear,summarySizePageSize,customGarments.length]);
   useEffect(()=>{if(summarySizePage>summarySizePageCount)setSummarySizePage(summarySizePageCount)},[summarySizePage,summarySizePageCount]);
-  return <section className="content">
+  return <section className="content measurements-page">
     {pendingDelete&&<div className="salary-modal-overlay" onClick={()=>{if(!deleteInFlight.current){setPendingDelete(null);setDeleteError('');}}}>
       <div className="salary-modal confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-measured-student-title" aria-describedby="delete-measured-student-description" onClick={event=>event.stopPropagation()}>
         <h3 id="delete-measured-student-title">Delete measured student?</h3>

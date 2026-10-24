@@ -1,0 +1,16 @@
+{
+  "appId": "in.telisoftware.garmentgateway",
+  "appName": "Teli Garment Gateway",
+  "webDir": "dist",
+  "android": {
+    "useLegacyBridge": true
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { startLocalApi } = require('./local-api.cjs');
 
+require('./garment-sms-ipc.cjs').setupGarmentSmsIpc(ipcMain);
 let mainWindow;
 require('./garment-cloud.cjs').setupGarmentCloud({app,ipcMain,dialog,safeStorage,getWindow:()=>mainWindow});
 const hasLock = app.requestSingleInstanceLock();

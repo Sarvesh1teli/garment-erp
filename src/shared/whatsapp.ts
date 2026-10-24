@@ -1,3 +1,4 @@
+import { paymentReceiptNumber } from './paymentReceipts';
 import type { Invoice, InvoicePayment } from "./types";
 import type { CompanySettings } from "../modules/settings/SettingsPage";
 
@@ -137,7 +138,7 @@ export function formatPaymentReceiptWhatsAppMessage(
   return `*PAYMENT RECEIPT* 💳
 *${compName.toUpperCase()}*
 ━━━━━━━━━━━━━━━━━━━━━
-🧾 *Receipt ID:* ${payment.id}
+🧾 *Receipt ID:* ${paymentReceiptNumber(payment)}
 📅 *Date:* ${payment.date}
 👤 *Customer / School:* ${payment.customer}
 📄 *Against Invoice:* ${payment.invoiceNo}

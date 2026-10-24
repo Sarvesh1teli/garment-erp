@@ -4,7 +4,8 @@ import { buildIncomeEntries } from '../../shared/income';
 import { defaultWorkTypes } from '../../shared/defaults';
 import type { AdvanceEntry, Assignment, Employee, Invoice, InvoicePayment, SalaryPayment, School, WorkEntry, WorkType } from '../../shared/types';
 import { PrintPreview, Table } from '../../shared/ui';
-import { money, useStoredState, workTypeCode } from '../../shared/utils';
+import { money, workTypeCode } from '../../shared/utils';
+import { useCommerceState } from '../../shared/CommerceContext';
 const nameOf=(employees:Employee[],id:string)=>employees.find(e=>e.id===id)?.name||'-';
 const customerName=(customers:string[][],id:string)=>customers.find(c=>c[0]===id)?.[1]||'-';
 
@@ -38,11 +39,11 @@ function ReportsContent({employees,workTypes,advances,workEntries,assignments,cu
   const [mode,setMode]=useState('All');
   const [staffEmployee,setStaffEmployee]=useState('All');
   const [showReportPrint,setShowReportPrint]=useState(false);
-  const [invoices,setInvoices]=useStoredState<Invoice[]>('garment-invoices',[]);
-  const [payments,setPayments]=useStoredState<InvoicePayment[]>('garment-invoice-payments',[]);
-  const [schoolCollections,setSchoolCollections]=useStoredState<string[][]>('garment-school-collections',[]);
-  const [expenses,setExpenses]=useStoredState<string[][]>('garment-expenses',[]);
-  const [salaryHistory,setSalaryHistory]=useStoredState<SalaryPayment[]>('garment-salary-history',[]);
+  const [invoices,setInvoices]=useCommerceState<Invoice[]>('garment-invoices',[]);
+  const [payments,setPayments]=useCommerceState<InvoicePayment[]>('garment-invoice-payments',[]);
+  const [schoolCollections,setSchoolCollections]=useCommerceState<string[][]>('garment-school-collections',[]);
+  const [expenses,setExpenses]=useCommerceState<string[][]>('garment-expenses',[]);
+  const [salaryHistory,setSalaryHistory]=useCommerceState<SalaryPayment[]>('garment-salary-history',[]);
   const parseMoney=(value:string)=>Number((value.match(/\d[\d,]*(?:\.\d+)?/)?.[0]||'0').replace(/,/g,''));
   const incomeEntries=buildIncomeEntries(invoices,payments,schoolCollections);
   const incomeSchoolOptions=[...new Set([...schools.map(s=>s.name),...schoolCollections.map(row=>row[2])].filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));

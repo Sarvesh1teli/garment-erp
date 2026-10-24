@@ -1,3 +1,6 @@
+import { QuickSales } from '../../shared/CommerceViews';
+import { useCommerce } from '../../shared/CommerceContext';
+import type { School } from '../../shared/types';
 ﻿import { useState } from 'react';
 import { Eye, MessageSquare, Pencil, Plus, Printer, Save, Trash2, Truck } from 'lucide-react';
 import type { CompanySettings } from '../settings/SettingsPage';
@@ -14,8 +17,9 @@ function ChallanDocument({challan,company}:{challan:DeliveryChallan;company:Comp
   return <div className="tax-doc"><CompanyPrintHeader company={company}/><h1>DELIVERY CHALLAN</h1><div className="doc-meta"><div><b>Challan Number</b><span>{challan.challanNo}</span></div><div><b>Date</b><span>{challan.date}</span></div><div><b>Status</b><span>{challan.status}</span></div><div><b>Delivery Mode</b><span>{challan.deliveryMode}</span></div></div><div className="doc-parties single"><div><h3>Delivery details</h3><p><b>Customer:</b> {challan.customer}</p><p><b>Phone:</b> {challan.phone}</p><p><b>Address:</b> {challan.address}</p><p><b>GSTIN:</b> {challan.gst}</p><p><b>Vehicle:</b> {challan.vehicle||'-'}</p><p><b>Driver:</b> {challan.driver||'-'}</p></div></div><table className="doc-table"><thead><tr><th>Product</th><th>Quantity</th><th>Unit</th><th>Remarks</th></tr></thead><tbody><tr><td>{challan.product}</td><td>{challan.qty}</td><td>{challan.unit}</td><td>{challan.remarks||'-'}</td></tr></tbody></table><div className="doc-footer"><div><b>Receiver acknowledgement</b><p>Name, signature and date</p></div><div><h3>For, {company.name}</h3><span>Authorized Signatory</span></div></div></div>;
 }
 
-export function DeliveryPage({company,customers}:{company:CompanySettings;customers:string[][]}){
-  const [tab,setTab]=useState<'challans'|'create'>('challans');
+export function DeliveryPage({company,customers,schools=[],onNavigate}:{company:CompanySettings;customers:string[][];schools?:School[];onNavigate?:(page:string,params?:Record<string,unknown>)=>void}){
+  const commerce=useCommerce();
+  const [tab,setTab]=useState<'dispatch'|'challans'|'create'>(commerce?'dispatch':'challans');
   const [challans,setChallans]=useStoredState<DeliveryChallan[]>('garment-delivery-challans',[]);
   const [form,setForm]=useState<DeliveryChallan>(()=>emptyChallan(customers));
   const [originalNo,setOriginalNo]=useState<string|null>(null);
@@ -74,11 +78,12 @@ export function DeliveryPage({company,customers}:{company:CompanySettings;custom
 
   return <section className="content delivery-page">
     {message&&<div className="toast"><span className="toast-dot"/>{message}</div>}
-    <div className="measurement-tabs wage-tabs">
-      <button className={tab==='challans'?'active':''} onClick={()=>setTab('challans')}><Truck size={16}/><span>Delivery Challans<small>{challans.length} records</small></span></button>
+    <div className="measurement-tabs wage-tabs">{commerce&&<button className={tab==='dispatch'?'active':''} onClick={()=>setTab('dispatch')}>Dispatch Bills</button>}
+      <button className={tab==='challans'?'active':''} onClick={()=>setTab('challans')}><Truck size={16}/><span>Manual Challans<small>{challans.length} records</small></span></button>
       <button className={tab==='create'?'active':''} onClick={()=>{setForm(emptyChallan(customers));setOriginalNo(null);setTab('create')}}><Plus size={16}/><span>Create Challan<small>complete dispatch details</small></span></button>
     </div>
-    {tab==='challans'&&<>
+    {commerce&&tab!=='dispatch'&&<p className="commerce-note">Manual challans are delivery paperwork only. Use Dispatch Bills for stock-linked delivery; a manual challan does not create an invoice or deduct stock.</p>}
+    {tab==='dispatch'&&commerce&&<QuickSales company={company} schools={schools} customers={customers} deliveryOnly onExistingInvoice={()=>onNavigate?.('Billing & Payments',{tab:'quick'})}/>}{tab==='challans'&&<>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
         <Stats values={[[ 'Challans',String(challans.length),'dispatch records'],['Ready',String(challans.filter(item=>item.status==='Ready').length),'to deliver'],['Delivered',String(challans.filter(item=>item.status==='Delivered').length),'completed'],['Cancelled',String(challans.filter(item=>item.status==='Cancelled').length),'cancelled' ]]}/>
         <div style={{display:'flex',alignItems:'center',gap:6,background:'#fff',padding:'6px 12px',borderRadius:8,border:'1px solid #cbd5e1'}}>
@@ -129,6 +134,6 @@ export function DeliveryPage({company,customers}:{company:CompanySettings;custom
       </div>
     </article>}
     {preview&&<PrintPreview doc={<ChallanDocument challan={preview} company={company}/>} onClose={()=>setPreview(null)} extra={<><button className="primary" style={{background:'#0b3f37',color:'#fff',display:'inline-flex',alignItems:'center',gap:6}} onClick={()=>reviewChallanSms(preview,smsLang)}><MessageSquare size={14}/> Send SMS Alert</button>{challans.some(item=>item.challanNo===preview.challanNo)?<button className="outline" onClick={()=>editChallan(preview)}><Pencil size={14}/> Edit</button>:undefined}</>}/>} 
-    {smsDraft&&<SmsComposerModal draft={smsDraft} setDraft={draft=>setSmsDraft({...smsDraft,...draft})} onClose={()=>setSmsDraft(null)} onSend={confirmChallanSms} sending={smsSending}/>} 
+    {smsDraft&&<SmsComposerModal draft={smsDraft} setDraft={draft=>setSmsDraft({...smsDraft,...draft})} onClose={()=>setSmsDraft(null)} onSend={confirmChallanSms} sending={smsSending} language={smsLang} onLanguageChange={lang=>{setSmsLang(lang);const c=challans.find(c=>c.challanNo===smsDraft.referenceId)||preview;if(c)reviewChallanSms(c,lang);}}/>}
   </section>;
 }

@@ -29,7 +29,7 @@ export function allocateCommonStock(stock:SchoolStock[],requests:{sourceId:strin
     const allocationId=`${id}-${index}`;
     const destinationId=`RST-${allocationId}`;
     const allocation={id:allocationId,date:target.date,school:target.school.trim(),className:target.className.trim()||'General',count,garment:source.garment,gender:source.gender,size:source.size,remarks:target.remarks.trim()||'-',allocatedStockId:destinationId};
-    destinations.push({id:destinationId,date:target.date,school:allocation.school,className:allocation.className,gender:source.gender,garment:source.garment,size:source.size,count,remarks:`Allocated from Common Stock (${source.id})${target.remarks.trim()?`: ${target.remarks.trim()}`:''}`,allocationSourceId:source.id,allocationId});
+    destinations.push({colour:source.colour,id:destinationId,date:target.date,school:allocation.school,className:allocation.className,gender:source.gender,garment:source.garment,size:source.size,count,remarks:`Allocated from Common Stock (${source.id})${target.remarks.trim()?`: ${target.remarks.trim()}`:''}`,allocationSourceId:source.id,allocationId});
     return {...source,count:source.count-count,commonAllocations:[...(source.commonAllocations||[]),allocation]};
   });
   return [...destinations,...updated];

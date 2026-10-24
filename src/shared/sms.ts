@@ -1,6 +1,6 @@
 ﻿import type { CompanySettings } from "../modules/settings/SettingsPage";
 
-import { API_BASE_URL, getStoredTenantId } from "./utils";
+import { garmentSmsRequest } from "./garmentSmsApi";
 
 export type SmsLanguage = "english" | "kannada" | "both";
 
@@ -18,9 +18,8 @@ export async function sendSmsViaGateway({
   referenceId?: string;
 }): Promise<{ ok: boolean; message: string }> {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/v1/sms/send`, {
+    const data = await garmentSmsRequest("/api/v1/sms/send", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Tenant-ID": getStoredTenantId() },
       body: JSON.stringify({
         recipientName,
         recipientPhone,
@@ -29,9 +28,7 @@ export async function sendSmsViaGateway({
         referenceId,
       }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Failed to enqueue SMS");
-    return { ok: true, message: data.message || "SMS queued successfully for delivery via TeliGateway!" };
+    return { ok: true, message: data.message || "SMS queued successfully for submission via Garment SMS Gateway!" };
   } catch (err: any) {
     return { ok: false, message: err.message || "Could not connect to SMS server" };
   }

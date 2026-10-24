@@ -1,13 +1,21 @@
+import { PaymentSmsAction } from '../../shared/GarmentReceiptSmsActions';
+import { GarmentInvoiceSmsButton } from '../../shared/GarmentInvoiceSmsButton';
+import { displayDate } from '../../shared/dateDisplay';
+import { paymentReceiptNumber, schoolCashReceipts } from '../../shared/paymentReceipts';
+import { QuickSales, type DeliveryItem } from '../../shared/CommerceViews';
+import { useCommerce } from '../../shared/CommerceContext';
+import { isRetailRecord, type BusinessMode } from '../../shared/commerce';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowLeft, Eye, MessageCircle, Pencil, Plus, Printer, ReceiptText, RotateCcw, Save, Send, Trash2, Users } from 'lucide-react';
 import type { CompanySettings } from '../settings/SettingsPage';
 import type { Invoice, InvoiceItem, InvoicePayment, School, StockSale, Student } from '../../shared/types';
 import { CompanyPrintHeader, GarmentPrintHeader, PrintPreview, Stats, Table } from '../../shared/ui';
-import { money, useStoredState } from '../../shared/utils';
+import { money } from '../../shared/utils';
+import { useCommerceState } from '../../shared/CommerceContext';
 import { openWhatsApp, formatInvoiceWhatsAppMessage, formatPaymentReceiptWhatsAppMessage } from '../../shared/whatsapp';
 
-type Props={company:CompanySettings;customers:string[][];schools:School[];students:Student[]};
-type Tab='invoices'|'create'|'payments'|'school';
+type Props={businessMode?:BusinessMode;company:CompanySettings;customers:string[][];schools:School[];students:Student[]};
+type Tab='invoices'|'create'|'payments'|'school'|'quick';
 
 const today=()=>new Date().toISOString().slice(0,10);
 const getAcademicYearFromDate=(dateStr?:string)=>{
@@ -150,8 +158,8 @@ export function InvoiceDocument({invoice,company,garment,sales}:{invoice:Invoice
   const gstPercent = invoice.gstPercent !== undefined ? invoice.gstPercent : ((invoice.cgst || 0) + (invoice.sgst || 0));
 
   const garmentGroups = items.reduce<Record<string, InvoiceItem[]>>((acc, item) => {
-    if (!item.qty || item.qty <= 0) return acc;
-    const g = item.garment.trim();
+    if (!item.qty || (item.qty <= 0 && invoice.totalAmount >= 0)) return acc;
+    const g = item.garment.trim()+(item.colour?` — ${item.colour}`:'');
     if (!acc[g]) acc[g] = [];
     acc[g].push(item);
     return acc;
@@ -160,12 +168,12 @@ export function InvoiceDocument({invoice,company,garment,sales}:{invoice:Invoice
   const garmentNames = Object.keys(garmentGroups);
 
   return (
-    <div className="tax-doc">
+    <div className="tax-doc compact-sales-invoice">
       {garment?<GarmentPrintHeader company={company} garment={garmentName}/>:<CompanyPrintHeader company={company}/>}
-      <h1>TAX INVOICE</h1>
+      <h1>{invoice.totalAmount<0?'CREDIT NOTE':'TAX INVOICE'}</h1>
       <div className="doc-meta">
         <div><b>Invoice Number</b><span>{invoice.invoiceNo}</span></div>
-        <div><b>Invoice Date</b><span>{invoice.invoiceDate}</span></div>
+        <div><b>Invoice Date</b><span>{displayDate(invoice.invoiceDate)}</span></div>
         <div><b>Due Date</b><span>{invoice.dueDate||'-'}</span></div>
         <div><b>State</b><span>{invoice.state||'-'}</span></div>
         <div><b>Status</b><span>{invoice.status}</span></div>
@@ -278,7 +286,7 @@ export function InvoiceDocument({invoice,company,garment,sales}:{invoice:Invoice
               <div>
                 <b style={{ fontSize: 10, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Amount in Words:</b>
                 <p style={{ margin: '4px 0 0', fontWeight: 800, fontSize: 12, color: '#0f172a' }}>
-                  {numberToWords(invoice.totalAmount)}
+                  {numberToWords(Math.abs(invoice.totalAmount))}
                 </p>
               </div>
               <div style={{ marginTop: 10, fontSize: 11, color: '#64748b' }}>
@@ -381,17 +389,19 @@ export function InvoiceDocument({invoice,company,garment,sales}:{invoice:Invoice
 }
 
 function PaymentDocument({payment,invoice,company}:{payment:InvoicePayment;invoice?:Invoice;company:CompanySettings}){
-  return <div className="tax-doc receipt-doc"><CompanyPrintHeader company={company}/><h1>INVOICE PAYMENT RECEIPT</h1><div className="doc-meta"><div><b>Receipt</b><span>{payment.id}</span></div><div><b>Date</b><span>{payment.date}</span></div><div><b>Invoice</b><span>{payment.invoiceNo}</span></div><div><b>Mode</b><span>{payment.mode}</span></div><div><b>Amount</b><span>{money(payment.amount)}</span></div></div><div className="doc-parties single"><div><h3>Customer details</h3><p><b>Customer:</b> {payment.customer}</p><p><b>Reference:</b> {payment.reference||'-'}</p><p><b>Remarks:</b> {payment.remarks||'-'}</p><p><b>Invoice total:</b> {invoice?money(invoice.totalAmount):'-'}</p></div></div><div className="doc-footer"><div><b>Received with thanks</b><p>{money(payment.amount)}</p></div><div><h3>For, {company.name}</h3><span>Authorized Signatory</span></div></div></div>;
+  return <div className="tax-doc receipt-doc"><CompanyPrintHeader company={company}/><h1>INVOICE PAYMENT RECEIPT</h1><div className="doc-meta"><div><b>Receipt</b><span>{paymentReceiptNumber(payment)}</span></div><div><b>Date</b><span>{displayDate(payment.date)}</span></div><div><b>Invoice</b><span>{payment.invoiceNo}</span></div><div><b>Mode</b><span>{payment.mode}</span></div><div><b>Amount</b><span>{money(payment.amount)}</span></div></div><div className="doc-parties single"><div><h3>Customer details</h3><p><b>Customer:</b> {payment.customer}</p><p><b>Reference:</b> {payment.reference||'-'}</p><p><b>Remarks:</b> {payment.remarks||'-'}</p><p><b>Invoice total:</b> {invoice?money(invoice.totalAmount):'-'}</p></div></div><div className="doc-footer"><div><b>Received with thanks</b><p>{money(payment.amount)}</p></div><div><h3>For, {company.name}</h3><span>Authorized Signatory</span></div></div></div>;
 }
 
-export function BillingPaymentsPage({company,customers,schools,students,navParams,onNavigate}:Props & {navParams?:Record<string,unknown>|null;onNavigate?:(page:string,params?:Record<string,unknown>)=>void}){
-  const [tab,setTab]=useState<Tab>('invoices');
-  const [invoices,setInvoices]=useStoredState<Invoice[]>('garment-invoices',[]);
+export function BillingPaymentsPage({company,customers,schools,students,navParams,onNavigate,businessMode='both'}:Props & {navParams?:Record<string,unknown>|null;onNavigate?:(page:string,params?:Record<string,unknown>)=>void}){
+  const [tab,setTab]=useState<Tab>(businessMode==='shop'?'quick':'invoices');
+  const commerce=useCommerce();
+  const [invoices,setInvoices]=useCommerceState<Invoice[]>('garment-invoices',[]);
   const [invoiceFilterYear,setInvoiceFilterYear]=useState('All');
   const [invoiceFilterSchool,setInvoiceFilterSchool]=useState('All');
   const [invoiceFilterStatus,setInvoiceFilterStatus]=useState('All');
 
   useEffect(()=>{
+    if(navParams?.tab==='quick')setTab('quick');
     if(navParams?.tab==='school'){
       setTab('school');
       if(navParams?.school)setSchoolPayment(f=>({...f,school:String(navParams.school)}));
@@ -402,12 +412,13 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
       setInvoiceFilterSchool(String(navParams.school));
     }
   },[navParams]);
-  const [payments,setPayments]=useStoredState<InvoicePayment[]>('garment-invoice-payments',[]);
-  const [schoolSales]=useStoredState<StockSale[]>('garment-stock-sales',[]);
-  const [schoolCollections,setSchoolCollections]=useStoredState<string[][]>('garment-school-collections',[]);
+  const [payments,setPayments]=useCommerceState<InvoicePayment[]>('garment-invoice-payments',[]);
+  const [schoolSales]=useCommerceState<StockSale[]>('garment-stock-sales',[]);
+  const [schoolCollections,setSchoolCollections]=useCommerceState<string[][]>('garment-school-collections',[]);
   const [form,setForm]=useState<Invoice>(()=>emptyInvoice(customers));
   const [originalInvoiceNo,setOriginalInvoiceNo]=useState<string|null>(null);
   const [message,setMessage]=useState('');
+  const [lastSavedInvoice,setLastSavedInvoice]=useState<Invoice|null>(null);
   const [previewInvoice,setPreviewInvoice]=useState<Invoice|null>(null);
   const [viewInvoice,setViewInvoice]=useState<Invoice|null>(null);
   const [paymentPreview,setPaymentPreview]=useState<InvoicePayment|null>(null);
@@ -492,7 +503,9 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
           return false;
         }
       }
-      if (invoiceFilterSchool !== 'All') {
+      if(invoiceFilterSchool==='__others__'){
+        if(schools.some(school=>school.name.trim().toLowerCase()===(inv.customer||'').trim().toLowerCase()))return false;
+      } else if (invoiceFilterSchool !== 'All') {
         if ((inv.customer || '').trim().toLowerCase() !== invoiceFilterSchool.trim().toLowerCase()) {
           return false;
         }
@@ -506,7 +519,7 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
       }
       return true;
     });
-  }, [invoices, invoiceFilterYear, invoiceFilterSchool, invoiceFilterStatus, payments]);
+  }, [invoices, invoiceFilterYear, invoiceFilterSchool, invoiceFilterStatus, payments, schools]);
 
   const filteredPendingTotal = filteredInvoices.reduce((sum, invoice) => sum + Math.max(0, invoice.totalAmount - paidFor(invoice.invoiceNo)), 0);
   const filteredPaidTotal = filteredInvoices.reduce((sum, invoice) => sum + paidFor(invoice.invoiceNo), 0);
@@ -523,10 +536,10 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
     const saved={...form,invoiceNo:number,status};
     setInvoices(current=>[saved,...current.filter(invoice=>invoice.invoiceNo!==originalInvoiceNo&&invoice.invoiceNo!==number)]);
     if(originalInvoiceNo&&originalInvoiceNo!==number)setPayments(current=>current.map(payment=>payment.invoiceNo===originalInvoiceNo?{...payment,invoiceNo:number,customer:saved.customer}:payment));
-    setForm(emptyInvoice(customers));setOriginalInvoiceNo(null);setMessage('Invoice saved successfully.');setTab('invoices');
+    setForm(emptyInvoice(customers));setOriginalInvoiceNo(null);setMessage('Invoice saved successfully.');setLastSavedInvoice(saved);setTab('invoices');
   };
-  const editInvoice=(invoice:Invoice)=>{setForm(invoice);setOriginalInvoiceNo(invoice.invoiceNo);setTab('create')};
-  const deleteInvoice=(invoice:Invoice)=>{if(payments.some(payment=>payment.invoiceNo===invoice.invoiceNo)){setMessage('Delete invoice payments before deleting this invoice.');return}if(window.confirm(`Delete invoice ${invoice.invoiceNo}?`))setInvoices(current=>current.filter(item=>item.invoiceNo!==invoice.invoiceNo))};
+  const editInvoice=(invoice:Invoice)=>{if(commerce?.managedInvoice(invoice.invoiceNo)){setTab('quick');setMessage('Use Quick Sale / Returns to manage this stock-linked bill.');return;}setForm(invoice);setOriginalInvoiceNo(invoice.invoiceNo);setTab('create')};
+  const deleteInvoice=(invoice:Invoice)=>{if(commerce?.managedInvoice(invoice.invoiceNo)){setTab('quick');setMessage('Use Cancel bill or Full Return. Linked stock history must be retained.');return;}if(payments.some(payment=>payment.invoiceNo===invoice.invoiceNo)){setMessage('Delete invoice payments before deleting this invoice.');return}if(window.confirm(`Delete invoice ${invoice.invoiceNo}?`))setInvoices(current=>current.filter(item=>item.invoiceNo!==invoice.invoiceNo))};
   const [collectionType, setCollectionType] = useState<'invoice' | 'advance'>('invoice');
   const [selectedInvoiceNo, setSelectedInvoiceNo] = useState<string>('all');
 
@@ -571,7 +584,7 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
     setPaymentPreview(payment);
     setMessage('Invoice payment recorded and synced.');
   };
-  const deletePayment=(payment:InvoicePayment)=>{
+  const deletePayment=(payment:InvoicePayment)=>{if(commerce?.ledger.some(sale=>sale.invoice.invoiceNo===payment.invoiceNo&&sale.returnDate)){setMessage('This payment is part of a returned or cancelled sale. Its receipt and refund history must be retained.');return;}if(isRetailRecord(payment.id)){setTab('quick');setMessage('Manage this receipt through Quick Sale / Returns.');return;}
     if(!window.confirm(`Delete payment ${payment.id}?`))return;
     const remaining=paidFor(payment.invoiceNo)-(payment.amount + (payment.discount || 0));
     setPayments(current=>current.filter(item=>item.id!==payment.id));
@@ -581,6 +594,7 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
     }
   };
   const deleteSchoolCollection = (receiptNo: string) => {
+    if(payments.some(payment=>payment.reference===receiptNo&&commerce?.ledger.some(sale=>sale.invoice.invoiceNo===payment.invoiceNo&&sale.returnDate))){setMessage('This receipt is linked to a returned or cancelled sale and must be retained with its refund history.');return;}
     if (!window.confirm(`Delete school collection receipt ${receiptNo}?`)) return;
     const linkedPayments = payments.filter(p => p.reference === receiptNo);
     if (linkedPayments.length > 0) {
@@ -736,33 +750,36 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
   };
 
   const invoiceRows=filteredInvoices.map(invoice=>{const balance=Math.max(0,invoice.totalAmount-paidFor(invoice.invoiceNo));const status=balance>0&&invoice.dueDate&&invoice.dueDate<today()?'Overdue':invoice.status;return[invoice.invoiceNo,invoice.invoiceDate,invoice.customer,invoice.product,String(invoice.qty),money(invoice.totalAmount),money(paidFor(invoice.invoiceNo)),money(balance),status]});
-  const paymentRows=payments.map(payment=>[payment.id,payment.date,payment.invoiceNo,payment.customer,payment.mode,money(payment.amount),payment.discount?money(payment.discount):'-',payment.reference,payment.remarks]);
+  const paymentRows=payments.map(payment=>[paymentReceiptNumber(payment),payment.date,payment.invoiceNo,payment.customer,payment.mode,money(payment.amount),payment.discount?money(payment.discount):'-',payment.reference,payment.remarks]);
   const paymentHistorySchools=Array.from(new Set(payments.map(payment=>payment.customer).filter(Boolean))).sort();
   const filteredPaymentRows=payments.filter(payment=>{
     if(paymentHistorySchool!=='All'&&payment.customer!==paymentHistorySchool)return false;
     if(paymentHistoryFrom&&payment.date<paymentHistoryFrom)return false;
     if(paymentHistoryTo&&payment.date>paymentHistoryTo)return false;
     return true;
-  }).map(payment=>[payment.id,payment.date,payment.invoiceNo,payment.customer,payment.mode,money(payment.amount),payment.discount?money(payment.discount):'-',payment.reference,payment.remarks]);
-  const schoolRows=schoolCollections;
-  const schoolTotal=schoolCollections.reduce((sum,row)=>sum+Number((row[4].match(/\d[\d,]*(?:\.\d+)?/)?.[0]||'0').replace(/,/g,'')),0);
+  }).map(payment=>[paymentReceiptNumber(payment),payment.date,payment.invoiceNo,payment.customer,payment.mode,money(payment.amount),payment.discount?money(payment.discount):'-',payment.reference,payment.remarks]);
+  const schoolReceipts=schoolCashReceipts(payments,schoolCollections,schools.map(school=>school.name));
+  const schoolRows=schoolReceipts.map(receipt=>[receipt.number,receipt.date,receipt.school,receipt.mode,money(receipt.amount),receipt.remarks]);
+  const schoolTotal=schoolReceipts.reduce((sum,receipt)=>sum+receipt.amount,0);
   const activeSchools=schools.filter(s=>s.status==='Active');
   const activeCustomers=customers.filter(c=>(c[5]||'Active')==='Active');
   const schoolOptions=(()=>{const list=[...activeSchools];if(schoolPayment.school&&!list.some(s=>s.name===schoolPayment.school)){const s=schools.find(x=>x.name===schoolPayment.school);if(s)list.push(s)}return list.map(school=><option key={school.id} value={school.name}>{school.name}</option>)})();
   const invoiceCustomerOptions=(()=>{const list=[...activeCustomers];if(form.customer&&!list.some(c=>c[1]===form.customer)){const c=customers.find(x=>x[1]===form.customer);if(c)list.push(c)}return list.map(c=><option key={c[0]} value={c[0]}>{c[1]}</option>)})();
   const studentCount=useMemo(()=>students.filter(student=>student.school===schoolPayment.school).length,[students,schoolPayment.school]);
 
-  return <section className="content billing-page">{message&&<div className="toast"><span className="toast-dot"/>{message}</div>}
+  return <section className="content billing-page">
+    {lastSavedInvoice&&<div className="salary-success" style={{display:'flex',flexWrap:'wrap',gap:10,alignItems:'center'}}><span>Invoice {lastSavedInvoice.invoiceNo} saved.</span><GarmentInvoiceSmsButton invoice={lastSavedInvoice} companyName={company.name}/><button type="button" className="outline" onClick={()=>setPreviewInvoice(lastSavedInvoice)}>View / Print</button><button type="button" className="outline" onClick={()=>setLastSavedInvoice(null)}>Close</button></div>}
+{message&&<div className="toast"><span className="toast-dot"/>{message}</div>}
     {Boolean(navParams?.fromSchool) && onNavigate && (
       <div className="return-to-school-bar" style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 18px',background:'#e5f1ed',border:'2px solid #007c68',borderRadius:'10px',marginBottom:'16px'}}>
         <span style={{font:'600 14px Manrope',color:'#123d35',display:'flex',alignItems:'center',gap:8}}>
-          📍 Working on collections for <strong>{String(navParams?.fromSchool)}</strong>
+          📍 Working on billing for <strong>{String(navParams?.fromSchool)}</strong>
         </span>
         <button className="primary" style={{display:'flex',alignItems:'center',gap:6,fontSize:13,padding:'8px 16px',borderRadius:8}} onClick={()=>onNavigate(String(navParams?.fromPage || 'Customers & Schools'),{openSchool:String(navParams?.fromSchool)})}>
           <ArrowLeft size={16}/> Back to {String(navParams?.fromSchool)} Dashboard
         </button>
       </div>
-    )}<div className="measurement-tabs wage-tabs"><button className={tab==='invoices'?'active':''} onClick={()=>setTab('invoices')}><ReceiptText size={16}/><span>Invoices<small>{invoices.length} records</small></span></button><button className={tab==='create'?'active':''} onClick={()=>{setForm(emptyInvoice(customers));setOriginalInvoiceNo(null);setTab('create')}}><Plus size={16}/><span>Create Invoice<small>complete GST details</small></span></button><button className={tab==='payments'?'active':''} onClick={()=>setTab('payments')}><Save size={16}/><span>Invoice Payments<small>{payments.length} receipts</small></span></button><button className={tab==='school'?'active':''} onClick={()=>setTab('school')}><Users size={16}/><span>School Collections<small>{schoolCollections.length} receipts</small></span></button></div>
+    )}<div className="measurement-tabs wage-tabs">{commerce&&<button className={tab==='quick'?'active':''} onClick={()=>setTab('quick')}>Quick Sale & Returns</button>}<button className={tab==='invoices'?'active':''} onClick={()=>setTab('invoices')}><ReceiptText size={16}/><span>Invoices<small>{invoices.length} records</small></span></button><button className={tab==='create'?'active':''} onClick={()=>{setForm(emptyInvoice(customers));setOriginalInvoiceNo(null);setTab('create')}}><Plus size={16}/><span>Create Invoice<small>complete GST details</small></span></button><button className={tab==='payments'?'active':''} onClick={()=>setTab('payments')}><Save size={16}/><span>Invoice Payments<small>{payments.length} receipts</small></span></button>{businessMode!=='shop'&&<button className={tab==='school'?'active':''} onClick={()=>setTab('school')}><Users size={16}/><span>School Collections<small>{schoolReceipts.filter(receipt=>receipt.amount>0).length} receipts</small></span></button>}</div>
     {tab==='invoices'&&<>
       <div className="filterbar salary-filter" style={{flexWrap:'wrap',gap:'12px',alignItems:'flex-end',marginBottom:'14px'}}>
         <label style={{minWidth:140}}>
@@ -774,11 +791,12 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
             ))}
           </select>
         </label>
-        <label style={{minWidth:180,flex:1}}>
-          School / Customer
+        <label style={{width:240,maxWidth:'100%',flex:'0 1 240px'}}>
+          School / Others
           <select value={invoiceFilterSchool} onChange={e=>setInvoiceFilterSchool(e.target.value)}>
-            <option value="All">All Schools / Customers</option>
-            {invoiceSchoolOptions.map(name=>(
+            <option value="All">All Schools / Others</option>
+            <option value="__others__">Others — Customers / Walk-ins</option>
+            {Array.from(new Set(schools.map(school=>school.name))).sort().map(name=>(
               <option key={name} value={name}>{name}</option>
             ))}
           </select>
@@ -814,9 +832,9 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
         ['Paid',money(filteredPaidTotal),'recorded payments'],
         ['Pending',money(filteredPendingTotal),'outstanding balance']
       ]}/>
-      <Table paged={true} title="Tax invoice list" copy={(invoiceFilterYear!=='All'||invoiceFilterSchool!=='All'||invoiceFilterStatus!=='All')?`Showing ${filteredInvoices.length} of ${invoices.length} invoices`:"Complete invoices with paid and outstanding balances"} headers={['INVOICE','DATE','CUSTOMER','PRODUCT','QTY','TOTAL','PAID','BALANCE','STATUS']} rows={invoiceRows} actions={row=>{const invoice=invoices.find(item=>item.invoiceNo===row[0]);if(!invoice)return null;const isOpen=openInvoiceAction===invoice.invoiceNo;return <div className="dropdown-action-cell"><button type="button" className="outline mini-action dropdown-trigger" onClick={e=>{e.stopPropagation();const rect=(e.currentTarget as HTMLElement).getBoundingClientRect();const pos={top:rect.bottom+4,left:Math.max(8,rect.right-160)};setInvoiceDropdownPos(isOpen?null:pos);setOpenInvoiceAction(isOpen?null:invoice.invoiceNo)}}>Actions <span className="dropdown-arrow"/></button>{isOpen&&invoiceDropdownPos&&<div className="dropdown-menu" style={{top:invoiceDropdownPos.top,left:invoiceDropdownPos.left}}><button type="button" className="dropdown-item" onClick={()=>{setOpenInvoiceAction(null);setInvoiceDropdownPos(null);setViewInvoice(invoice)}}><Eye size={14}/> View</button><button type="button" className="dropdown-item" onClick={()=>{setOpenInvoiceAction(null);setInvoiceDropdownPos(null);editInvoice(invoice)}}><Pencil size={14}/> Edit</button><button type="button" className="dropdown-item danger" onClick={()=>{setOpenInvoiceAction(null);setInvoiceDropdownPos(null);deleteInvoice(invoice)}}><Trash2 size={14}/> Delete</button><button type="button" className="dropdown-item" style={{color:'#16a34a'}} onClick={()=>{setOpenInvoiceAction(null);setInvoiceDropdownPos(null);openWhatsApp({phone:invoice.customerPhone,message:formatInvoiceWhatsAppMessage(invoice,company)})}}><Send size={14}/> Send</button></div>}</div>}}/>
+      <Table paged={true} title="Tax invoice list" copy={(invoiceFilterYear!=='All'||invoiceFilterSchool!=='All'||invoiceFilterStatus!=='All')?`Showing ${filteredInvoices.length} of ${invoices.length} invoices`:"Complete invoices with paid and outstanding balances"} headers={['INVOICE','DATE','CUSTOMER','PRODUCT','QTY','TOTAL','PAID','BALANCE','STATUS']} rows={invoiceRows} actions={row=>{const invoice=invoices.find(item=>item.invoiceNo===row[0]);if(!invoice)return null;const isOpen=openInvoiceAction===invoice.invoiceNo;return <div className="dropdown-action-cell"><button type="button" className="outline mini-action dropdown-trigger" onClick={e=>{e.stopPropagation();const rect=(e.currentTarget as HTMLElement).getBoundingClientRect();const pos={top:rect.bottom+4,left:Math.max(8,rect.right-160)};setInvoiceDropdownPos(isOpen?null:pos);setOpenInvoiceAction(isOpen?null:invoice.invoiceNo)}}>Actions <span className="dropdown-arrow"/></button>{isOpen&&invoiceDropdownPos&&<div className="dropdown-menu" style={{top:invoiceDropdownPos.top,left:invoiceDropdownPos.left}}>{invoice.totalAmount-paidFor(invoice.invoiceNo)>0&&<button type="button" className="dropdown-item" onClick={()=>{setOpenInvoiceAction(null);setInvoiceDropdownPos(null);setPaymentSchool(invoice.customer);setPaymentForm({invoiceNo:invoice.invoiceNo,date:today(),amount:Math.max(0,invoice.totalAmount-paidFor(invoice.invoiceNo)),discount:0,mode:'Cash',reference:'',remarks:''});setPaymentSubTab('record');setTab('payments');}}><Save size={14}/> Collect Payment</button>}<button type="button" className="dropdown-item" onClick={()=>{setOpenInvoiceAction(null);setInvoiceDropdownPos(null);setViewInvoice(invoice)}}><Eye size={14}/> View</button><button type="button" className="dropdown-item" onClick={()=>{setOpenInvoiceAction(null);setInvoiceDropdownPos(null);editInvoice(invoice)}}><Pencil size={14}/> Edit</button><button type="button" className="dropdown-item danger" onClick={()=>{setOpenInvoiceAction(null);setInvoiceDropdownPos(null);deleteInvoice(invoice)}}><Trash2 size={14}/> Delete</button><button type="button" className="dropdown-item" style={{color:'#16a34a'}} onClick={()=>{setOpenInvoiceAction(null);setInvoiceDropdownPos(null);openWhatsApp({phone:invoice.customerPhone,message:formatInvoiceWhatsAppMessage(invoice,company)})}}><Send size={14}/> Send</button></div>}</div>}}/>
     </>}
-    {tab==='create'&&<article className="card measurement-form"><div className="form-title"><div><h2>{originalInvoiceNo?'Edit invoice':'Create tax invoice'}</h2><p>All invoice, GST, customer and shipping details are stored.</p></div><button className="primary" onClick={()=>setPreviewInvoice(form)}><Printer size={16}/> Preview</button></div><div className="form-grid"><label>Invoice No<input value={form.invoiceNo} onChange={e=>updateForm({invoiceNo:e.target.value})}/></label><label>Invoice Date<input type="date" value={form.invoiceDate} onChange={e=>updateForm({invoiceDate:e.target.value})}/></label><label>Due Date<input type="date" value={form.dueDate} onChange={e=>updateForm({dueDate:e.target.value})}/></label><label>State<input value={form.state} onChange={e=>updateForm({state:e.target.value})}/></label><label>Reverse Charge<select value={form.reverseCharge} onChange={e=>updateForm({reverseCharge:e.target.value})}><option>NO</option><option>YES</option></select></label><label>Customer<select value={customers.find(c=>c[1]===form.customer)?.[0]||''} onChange={e=>pickCustomer(e.target.value)}><option value="">Select customer</option>{invoiceCustomerOptions}</select></label><label>Phone<input value={form.customerPhone} onChange={e=>updateForm({customerPhone:e.target.value})}/></label><label>Customer GST<input value={form.customerGst} onChange={e=>updateForm({customerGst:e.target.value})}/></label><label className="wide">Billing Address<input value={form.customerAddress} onChange={e=>updateForm({customerAddress:e.target.value})}/></label><label>Ship To<input value={form.shipTo} onChange={e=>updateForm({shipTo:e.target.value})}/></label><label>Shipping GST<input value={form.shipGst} onChange={e=>updateForm({shipGst:e.target.value})}/></label><label className="wide">Shipping Address<input value={form.shipAddress} onChange={e=>updateForm({shipAddress:e.target.value})}/></label><label>Product<input value={form.product} onChange={e=>updateForm({product:e.target.value})}/></label><label>HSN / SAC<input value={form.hsn} onChange={e=>updateForm({hsn:e.target.value})}/></label><label>Quantity<input type="number" min="0" value={form.qty} onChange={e=>updateForm({qty:Number(e.target.value)})}/></label><label>Unit<input value={form.unit} onChange={e=>updateForm({unit:e.target.value})}/></label><label>Rate<input type="number" min="0" value={form.rate} onChange={e=>updateForm({rate:Number(e.target.value)})}/></label><label>CGST %<input type="number" min="0" value={form.cgst} onChange={e=>updateForm({cgst:Number(e.target.value)})}/></label><label>SGST %<input type="number" min="0" value={form.sgst} onChange={e=>updateForm({sgst:Number(e.target.value)})}/></label><label className="wide">Terms<input value={form.terms} onChange={e=>updateForm({terms:e.target.value})}/></label></div><Stats values={[[ 'Taxable',money(form.taxableAmount),'quantity × rate'],['CGST',money(form.taxableAmount*form.cgst/100),`${form.cgst}%`],['SGST',money(form.taxableAmount*form.sgst/100),`${form.sgst}%`],['Total',money(form.totalAmount),'invoice total' ]]}/><div className="form-actions"><button className="primary" onClick={saveInvoice}><Save size={16}/> Save invoice</button></div></article>}
+    {tab==='quick'&&commerce&&<QuickSales key={JSON.stringify(navParams?.tab==='quick'?navParams:null)} company={company} schools={schools} customers={customers} onBack={navParams?.fromSchool&&onNavigate?()=>onNavigate(String(navParams.fromPage||'Production'),{openSchool:String(navParams.fromSchool)}):undefined} renderInvoice={sale=><InvoiceDocument invoice={sale.invoice} company={company}/>} prefill={navParams?.tab==='quick'&&navParams?.school?{owner:'school',party:String(navParams.school),items:navParams.deliveryItems as DeliveryItem[]|undefined}:navParams?.tab==='quick'&&navParams?.customer?{owner:'customer',party:String(navParams.customer)}:undefined}/>}{tab==='create'&&<article className="card measurement-form"><div className="form-title"><div><h2>{originalInvoiceNo?'Edit invoice':'Create tax invoice'}</h2><p>All invoice, GST, customer and shipping details are stored.</p></div><button className="primary" onClick={()=>setPreviewInvoice(form)}><Printer size={16}/> Preview</button></div><div className="form-grid"><label>Invoice No<input value={form.invoiceNo} onChange={e=>updateForm({invoiceNo:e.target.value})}/></label><label>Invoice Date<input type="date" value={form.invoiceDate} onChange={e=>updateForm({invoiceDate:e.target.value})}/></label><label>Due Date<input type="date" value={form.dueDate} onChange={e=>updateForm({dueDate:e.target.value})}/></label><label>State<input value={form.state} onChange={e=>updateForm({state:e.target.value})}/></label><label>Reverse Charge<select value={form.reverseCharge} onChange={e=>updateForm({reverseCharge:e.target.value})}><option>NO</option><option>YES</option></select></label><label>Customer<select value={customers.find(c=>c[1]===form.customer)?.[0]||''} onChange={e=>pickCustomer(e.target.value)}><option value="">Select customer</option>{invoiceCustomerOptions}</select></label><label>Phone<input value={form.customerPhone} onChange={e=>updateForm({customerPhone:e.target.value})}/></label><label>Customer GST<input value={form.customerGst} onChange={e=>updateForm({customerGst:e.target.value})}/></label><label className="wide">Billing Address<input value={form.customerAddress} onChange={e=>updateForm({customerAddress:e.target.value})}/></label><label>Ship To<input value={form.shipTo} onChange={e=>updateForm({shipTo:e.target.value})}/></label><label>Shipping GST<input value={form.shipGst} onChange={e=>updateForm({shipGst:e.target.value})}/></label><label className="wide">Shipping Address<input value={form.shipAddress} onChange={e=>updateForm({shipAddress:e.target.value})}/></label><label>Product<input value={form.product} onChange={e=>updateForm({product:e.target.value})}/></label><label>HSN / SAC<input value={form.hsn} onChange={e=>updateForm({hsn:e.target.value})}/></label><label>Quantity<input type="number" min="0" value={form.qty} onChange={e=>updateForm({qty:Number(e.target.value)})}/></label><label>Unit<input value={form.unit} onChange={e=>updateForm({unit:e.target.value})}/></label><label>Rate<input type="number" min="0" value={form.rate} onChange={e=>updateForm({rate:Number(e.target.value)})}/></label><label>CGST %<input type="number" min="0" value={form.cgst} onChange={e=>updateForm({cgst:Number(e.target.value)})}/></label><label>SGST %<input type="number" min="0" value={form.sgst} onChange={e=>updateForm({sgst:Number(e.target.value)})}/></label><label className="wide">Terms<input value={form.terms} onChange={e=>updateForm({terms:e.target.value})}/></label></div><Stats values={[[ 'Taxable',money(form.taxableAmount),'quantity × rate'],['CGST',money(form.taxableAmount*form.cgst/100),`${form.cgst}%`],['SGST',money(form.taxableAmount*form.sgst/100),`${form.sgst}%`],['Total',money(form.totalAmount),'invoice total' ]]}/><div className="form-actions"><button className="primary" onClick={saveInvoice}><Save size={16}/> Save invoice</button></div></article>}
     {tab==='payments'&&(()=>{
       const unpaidInvoices = invoices.filter(inv => inv.status !== 'Paid');
       const filteredUnpaidInvoices = paymentSchool
@@ -977,7 +995,7 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
             headers={['PAYMENT', 'DATE', 'INVOICE', 'CUSTOMER', 'MODE', 'AMOUNT', 'DISCOUNT', 'REFERENCE', 'REMARKS']}
             rows={filteredPaymentRows}
             actions={row => {
-              const payment = payments.find(item => item.id === row[0])!;
+              const payment = payments.find(item => paymentReceiptNumber(item) === row[0] && item.invoiceNo===row[2])!;
               const inv = invoices.find(item => item.invoiceNo === payment.invoiceNo);
               const isOpen=openPaymentAction===payment.id;
               return <div className="dropdown-action-cell"><button type="button" className="outline mini-action dropdown-trigger" onClick={e=>{e.stopPropagation();const rect=(e.currentTarget as HTMLElement).getBoundingClientRect();setPaymentDropdownPos(isOpen?null:{top:rect.bottom+4,left:Math.max(8,rect.right-160)});setOpenPaymentAction(isOpen?null:payment.id)}}>Actions <span className="dropdown-arrow"/></button>{isOpen&&paymentDropdownPos&&<div className="dropdown-menu" style={{top:paymentDropdownPos.top,left:paymentDropdownPos.left}}><button type="button" className="dropdown-item" onClick={()=>{setOpenPaymentAction(null);setPaymentDropdownPos(null);setPaymentPreview(payment)}}><Printer size={14}/> Print</button><button type="button" className="dropdown-item" style={{color:'#16a34a'}} onClick={()=>{setOpenPaymentAction(null);setPaymentDropdownPos(null);openWhatsApp({phone:inv?.customerPhone,message:formatPaymentReceiptWhatsAppMessage(payment,inv,company)})}}><Send size={14}/> Send</button><button type="button" className="dropdown-item danger" onClick={()=>{setOpenPaymentAction(null);setPaymentDropdownPos(null);deletePayment(payment)}}><Trash2 size={14}/> Delete</button></div>}</div>;
@@ -991,23 +1009,20 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
       const schoolInvoices = invoices.filter(inv => inv.customer === selSchool);
       const schoolPendingInvs = schoolInvoices.filter(inv => (inv.totalAmount - paidFor(inv.invoiceNo)) > 0);
       const schoolBilled = schoolInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
-      const schoolColls = schoolCollections.filter(c => c[2] === selSchool);
-      const schoolCollTotal = schoolColls.reduce((sum, c) => {
-        const m = (c[4] || '').match(/\d[\d,]*(?:\.\d+)?/);
-        return sum + (m ? Number(m[0].replace(/,/g, '')) : 0);
-      }, 0);
+      const schoolColls = schoolReceipts.filter(receipt=>receipt.school===selSchool);
+      const schoolCollTotal = schoolColls.reduce((sum,receipt)=>sum+receipt.amount,0);
       const schoolPending = schoolInvoices.reduce(
         (sum, inv) => sum + Math.max(0, inv.totalAmount - paidFor(inv.invoiceNo)),
         0
       );
-      const schoolDiscounted = payments.filter(payment => schoolInvoices.some(invoice => invoice.invoiceNo === payment.invoiceNo)).reduce((sum, payment) => sum + Number(payment.discount || 0), 0);
-      const allSchoolDiscounted = payments.filter(payment => invoices.some(invoice => invoice.invoiceNo === payment.invoiceNo && schools.some(school => school.name === invoice.customer))).reduce((sum, payment) => sum + Number(payment.discount || 0), 0);
+      const schoolDiscounted = payments.filter(payment => payment.mode!=='Return credit' && schoolInvoices.some(invoice => invoice.invoiceNo === payment.invoiceNo)).reduce((sum, payment) => sum + Number(payment.discount || 0), 0);
+      const allSchoolDiscounted = payments.filter(payment => payment.mode!=='Return credit' && invoices.some(invoice => invoice.invoiceNo === payment.invoiceNo && schools.some(school => school.name === invoice.customer))).reduce((sum, payment) => sum + Number(payment.discount || 0), 0);
       const schoolAdvance = Math.max(0, schoolCollTotal + schoolDiscounted - schoolBilled);
 
       return (
         <>
           <Stats className="discount-summary-metrics" values={selSchool ? [
-            ['Receipts', String(schoolColls.length), `for ${selSchool}`],
+            ['Receipts', String(schoolColls.filter(receipt=>receipt.amount>0).length), `for ${selSchool}`],
             ['Total Collected', money(schoolCollTotal), `for ${selSchool}`],
             ['Discounted', money(schoolDiscounted), 'settlement discounts / waivers'],
             [
@@ -1017,7 +1032,7 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
             ],
             ['Total Invoiced', money(schoolBilled), `${schoolInvoices.length} invoice${schoolInvoices.length === 1 ? '' : 's'}`]
           ] : [
-            ['Receipts', String(schoolCollections.length), 'all school collections'],
+            ['Receipts', String(schoolReceipts.filter(receipt=>receipt.amount>0).length), 'all school collections'],
             ['Total Collected', money(schoolTotal), 'across all schools'],
             ['Discounted', money(allSchoolDiscounted), 'across all schools'],
             ['Selected School', 'All Schools', 'select school below'],
@@ -1191,10 +1206,13 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
           <Table
             paged={true}
             title="School collection history"
-            copy="Receipts collected directly from schools (synced with invoice payments &amp; advance credits)"
+            copy="School invoice payments and collection receipts, including advances and refunds."
             headers={['RECEIPT', 'DATE', 'SCHOOL', 'MODE', 'AMOUNT', 'REMARKS']}
-            rows={schoolRows}
-            actions={row => (
+            rows={selSchool?schoolRows.filter(row=>row[2]===selSchool):schoolRows}
+            actions={row => {
+              const receipt=schoolReceipts.find(receipt=>receipt.number===row[0]&&receipt.date===row[1]&&receipt.school===row[2]);
+              if(receipt?.payment)return <button className="outline mini-action" onClick={()=>setPaymentPreview(receipt.payment!)}><Printer size={14}/> Receipt</button>;
+              return (
               <div className="table-actions">
                 <button
                   className="outline mini-action danger"
@@ -1204,11 +1222,11 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
                   <Trash2 size={14}/>
                 </button>
               </div>
-            )}
+            );}}
           />
         </>
       );
     })()}
-    {previewInvoice&&<PrintPreview doc={<InvoiceDocument invoice={previewInvoice} company={company} sales={schoolSales}/>} onClose={()=>setPreviewInvoice(null)} extra={<button className="primary" style={{background:'#16a34a',borderColor:'#15803d',display:'flex',alignItems:'center',gap:6,fontWeight:700}} onClick={()=>openWhatsApp({phone:previewInvoice.customerPhone,message:formatInvoiceWhatsAppMessage(previewInvoice,company)})}><MessageCircle size={14}/> Send on WhatsApp</button>}/>} {viewInvoice&&<PrintPreview doc={<InvoiceDocument invoice={viewInvoice} company={company} sales={schoolSales}/>} onClose={()=>setViewInvoice(null)} extra={<><button className="primary" style={{background:'#16a34a',borderColor:'#15803d',display:'flex',alignItems:'center',gap:6,fontWeight:700}} onClick={()=>openWhatsApp({phone:viewInvoice.customerPhone,message:formatInvoiceWhatsAppMessage(viewInvoice,company)})}><MessageCircle size={14}/> Send on WhatsApp</button><button className="outline" onClick={()=>editInvoice(viewInvoice)}><Pencil size={14}/> Edit</button></>}/>} {paymentPreview&&<PrintPreview doc={<PaymentDocument payment={paymentPreview} invoice={invoices.find(invoice=>invoice.invoiceNo===paymentPreview.invoiceNo)} company={company}/>} onClose={()=>setPaymentPreview(null)} extra={<button className="primary" style={{background:'#16a34a',borderColor:'#15803d',display:'flex',alignItems:'center',gap:6,fontWeight:700}} onClick={()=>{const inv=invoices.find(item=>item.invoiceNo===paymentPreview.invoiceNo);openWhatsApp({phone:inv?.customerPhone,message:formatPaymentReceiptWhatsAppMessage(paymentPreview,inv,company)})}}><MessageCircle size={14}/> Send Receipt on WhatsApp</button>}/>}
+    {previewInvoice&&<PrintPreview doc={<InvoiceDocument invoice={previewInvoice} company={company} sales={schoolSales}/>} onClose={()=>setPreviewInvoice(null)} extra={<><GarmentInvoiceSmsButton invoice={previewInvoice} companyName={company.name}/><button className="primary" style={{background:'#16a34a',borderColor:'#15803d',display:'flex',alignItems:'center',gap:6,fontWeight:700}} onClick={()=>openWhatsApp({phone:previewInvoice.customerPhone,message:formatInvoiceWhatsAppMessage(previewInvoice,company)})}><MessageCircle size={14}/> Send on WhatsApp</button></>}/>} {viewInvoice&&<PrintPreview doc={<InvoiceDocument invoice={viewInvoice} company={company} sales={schoolSales}/>} onClose={()=>setViewInvoice(null)} extra={<><GarmentInvoiceSmsButton invoice={viewInvoice} companyName={company.name}/><button className="primary" style={{background:'#16a34a',borderColor:'#15803d',display:'flex',alignItems:'center',gap:6,fontWeight:700}} onClick={()=>openWhatsApp({phone:viewInvoice.customerPhone,message:formatInvoiceWhatsAppMessage(viewInvoice,company)})}><MessageCircle size={14}/> Send on WhatsApp</button><button className="outline" onClick={()=>editInvoice(viewInvoice)}><Pencil size={14}/> Edit</button></>}/>} {paymentPreview&&<PrintPreview doc={<PaymentDocument payment={paymentPreview} invoice={invoices.find(invoice=>invoice.invoiceNo===paymentPreview.invoiceNo)} company={company}/>} onClose={()=>setPaymentPreview(null)} extra={<><PaymentSmsAction payment={paymentPreview} invoice={invoices.find(i=>i.invoiceNo===paymentPreview.invoiceNo)} companyName={company.name}/><button className="primary" style={{background:'#16a34a',borderColor:'#15803d',display:'flex',alignItems:'center',gap:6,fontWeight:700}} onClick={()=>{const inv=invoices.find(item=>item.invoiceNo===paymentPreview.invoiceNo);openWhatsApp({phone:inv?.customerPhone,message:formatPaymentReceiptWhatsAppMessage(paymentPreview,inv,company)})}}><MessageCircle size={14}/> Send Receipt on WhatsApp</button></>}/>}
     {collectionAlert&&<div className="stock-modal-overlay" onClick={()=>setCollectionAlert(null)}><article className="card measurement-form entry-modal" onClick={e=>e.stopPropagation()}><div className="form-title"><div><h2>Missing required fields</h2><p>Please fill the following to add this collection.</p></div><button className="outline" onClick={()=>setCollectionAlert(null)}>Close</button></div><div className="alert-list">{collectionAlert.map(field=><div key={field}><AlertTriangle size={15}/><span>{field} is required</span></div>)}</div><div className="form-actions"><button className="primary" onClick={()=>setCollectionAlert(null)}>OK</button></div></article></div>}</section>;
 }

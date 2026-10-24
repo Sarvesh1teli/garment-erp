@@ -4,7 +4,8 @@ import { openWhatsApp, formatOrderWhatsAppMessage } from '../../shared/whatsapp'
 import type { CompanySettings } from '../settings/SettingsPage';
 import { SmsComposerModal, type SmsDraft } from '../../shared/SmsComposerModal';
 import { formatOrderStatusSms, sendSmsViaGateway } from '../../shared/sms';
-import { API_BASE_URL, useStoredState } from '../../shared/utils';
+import { API_BASE_URL } from '../../shared/utils';
+import { useCommerceState } from '../../shared/CommerceContext';
 import type { SchoolStock } from '../../shared/types';
 
 export type SchoolConnection = {
@@ -51,7 +52,7 @@ export function SchoolNetworkPage({company}:{company:CompanySettings}) {
   const [garmentCode] = useState('GARMENT-5028');
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [, setSchoolStock] = useStoredState<SchoolStock[]>('garment-school-stock', []);
+  const [, setSchoolStock] = useCommerceState<SchoolStock[]>('garment-school-stock', []);
   const [smsDraft, setSmsDraft] = useState<SmsDraft | null>(null);
   const [sendingSms, setSendingSms] = useState(false);
 
