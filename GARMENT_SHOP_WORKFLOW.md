@@ -29,3 +29,12 @@ New sales are stored under `garment-retail-ledger` as a complete bill/payment/st
 Unsynced ledger writes are retained in tenant-scoped local storage and retried when the connection returns. Ledger writes are serialized; a stale backend response cannot replace a newer local sale. Existing legacy store keys and stock receipt formats remain unchanged.
 
 No school PWA, shared server, unrelated application, or Firebase configuration changes are required for this desktop release.
+
+
+Stock-to-bill workflow
+----------------------
+Ready Garments offers Sell / Bill for a single variant and selection for several variants belonging to the same stock owner. These actions navigate to New Sale with garment, size, colour and price prefilled; they do not change stock. Stock is deducted by the existing sale ledger only when dispatched. School ownership and General Stock allocation retain their existing meanings. Allocation alone creates no bill or payment.
+
+After adding stock, View Stock closes the confirmation and Sell / Bill Now prefills the newly received quantities. The save confirmation shows final bill, received cash, current pending and remaining stock per variant. Collect Balance opens payment collection against the original invoice; it never creates a second dispatch.
+
+Billing's primary tabs are New Sale, Bills & Payments, and Payment History. School Payments & Advances remains available, and Advanced Invoice is accessible from Bills & Payments. Final Bill already includes bill discount and tax. Waiver is a later settlement discount; Total Paid is cash/bank actually received. Receipt history continues to show each transaction's historical balance.
