@@ -91,7 +91,7 @@ export function DeliveryPage({company,customers,schools=[],onNavigate}:{company:
           <select value={smsLang} onChange={e=>setSmsLang(e.target.value as SmsLanguage)} style={{padding:'4px 8px',fontSize:12,borderRadius:6,border:'1px solid #cbd5e1'}}>
             <option value="english">English</option>
             <option value="kannada">ಕನ್ನಡ (Kannada)</option>
-            <option value="both">Both / ಎರಡೂ</option>
+            <option value="both">Kannada + English</option><option value="hindi">हिन्दी (Hindi)</option><option value="hindi_english">Hindi + English</option>
           </select>
         </div>
       </div>
@@ -108,7 +108,7 @@ export function DeliveryPage({company,customers,schools=[],onNavigate}:{company:
           <select value={smsLang} onChange={e=>setSmsLang(e.target.value as SmsLanguage)} style={{padding:'4px 8px',fontSize:12,borderRadius:6,border:'1px solid #cbd5e1'}}>
             <option value="english">English</option>
             <option value="kannada">ಕನ್ನಡ (Kannada)</option>
-            <option value="both">Both / ಎರಡೂ</option>
+            <option value="both">Kannada + English</option><option value="hindi">हिन्दी (Hindi)</option><option value="hindi_english">Hindi + English</option>
           </select>
           <button className="primary" onClick={()=>setPreview(form)}><Printer size={16}/> Preview</button>
         </div>

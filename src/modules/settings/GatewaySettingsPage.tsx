@@ -1,6 +1,6 @@
 ﻿import { useEffect, useState } from "react";
 import { CheckCircle2, Globe, MessageSquare, Phone, Plus, RefreshCw, Send, Settings, Trash2, Wifi, WifiOff } from "lucide-react";
-import { sendSmsViaGateway, formatSalarySms, formatStockOutSms, formatPaymentReceiptSms, formatOrderStatusSms, type SmsLanguage } from "../../shared/sms";
+import { smsLanguages, sendSmsViaGateway, formatSalarySms, formatStockOutSms, formatPaymentReceiptSms, formatOrderStatusSms, type SmsLanguage } from "../../shared/sms";
 import { garmentSmsRequest } from "../../shared/garmentSmsApi";
 import type { CompanySettings } from "./SettingsPage";
 
@@ -249,12 +249,12 @@ export function GatewaySettingsPage({company}:{company:CompanySettings}) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
           <h3 style={{ margin: 0, fontSize: 15, color: "#0b3f37", display: "flex", alignItems: "center", gap: 6, fontWeight: 800 }}>
             <Send size={18} style={{ color: "#007c68" }} />
-            ⚡ Quick SMS Dispatcher (English / ಕನ್ನಡ / Both)
+            ⚡ Quick SMS Dispatcher
           </h3>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: "#475569" }}>SMS Language:</span>
             <div style={{ display: "inline-flex", borderRadius: 6, overflow: "hidden", border: "1px solid #cbd5e1" }}>
-              {(["english", "kannada", "both"] as SmsLanguage[]).map(lang => (
+              {smsLanguages.map(item=>item.value).map(lang => (
                 <button
                   key={lang}
                   type="button"
@@ -269,7 +269,7 @@ export function GatewaySettingsPage({company}:{company:CompanySettings}) {
                     cursor: "pointer",
                   }}
                 >
-                  {lang === "english" ? "English" : lang === "kannada" ? "ಕನ್ನಡ" : "Both / ಎರಡೂ"}
+                  {smsLanguages.find(item=>item.value===lang)?.label}
                 </button>
               ))}
             </div>
@@ -572,7 +572,7 @@ export function GatewaySettingsPage({company}:{company:CompanySettings}) {
       <div className="card" style={{padding:16,display:'grid',gap:10}}>
         <strong>Automatic invoice SMS</strong>
         <label><input type="checkbox" checked={Boolean(settings?.autoInvoice)} onChange={event=>saveSettings({autoInvoice:event.target.checked})}/> Queue SMS when a new invoice is saved (valid customer mobile required)</label>
-        <label>Default language <select value={settings?.language||'english'} onChange={event=>saveSettings({language:event.target.value as SmsLanguage})}><option value="english">English</option><option value="kannada">Kannada</option><option value="both">Both</option></select></label>
+        <label>Default language <select value={settings?.language||'english'} onChange={event=>saveSettings({language:event.target.value as SmsLanguage})}>{smsLanguages.map(item=><option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
         <small>Desktop ID: {settings?.installationId||'—'} · Independent SMS server: grm-bill-sms.telisoftware.com. Submitted means sent to the phone SIM API, not delivery confirmed.</small>
       </div>
       {/* How to Connect Instructions */}

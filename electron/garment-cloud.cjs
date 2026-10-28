@@ -4,14 +4,17 @@ const valid=value=>value&&/^[0-9a-f-]{36}$/i.test(value.businessId)&&/^[a-f0-9]{
 function setupGarmentCloud({app,ipcMain,dialog,safeStorage,getWindow}){
   const identityPath=()=>path.join(app.getPath('userData'),'garment-business-identity.json');
   let cache;
+  let resetting=false;
   function save(identity){
     if(!safeStorage.isEncryptionAvailable())throw Error('Windows secure credential storage is unavailable. Restart Windows and try again.');
     const payload={version:1,encrypted:safeStorage.encryptString(JSON.stringify(identity)).toString('base64')};
+    fs.mkdirSync(app.getPath('userData'),{recursive:true});
     fs.writeFileSync(identityPath()+'.tmp',JSON.stringify(payload),{mode:0o600});fs.renameSync(identityPath()+'.tmp',identityPath());cache=identity;
   }
   function load(){
     if(cache)return cache;
-    if(fs.existsSync(identityPath())){try{const p=JSON.parse(fs.readFileSync(identityPath(),'utf8'));cache=JSON.parse(safeStorage.decryptString(Buffer.from(p.encrypted,'base64')));if(!valid(cache))throw Error();return cache;}catch{throw Error('Cannot read this computer’s business identity. Restore its private business link file; do not generate another identity.');}}
+    if(fs.existsSync(identityPath())){try{const p=JSON.parse(fs.readFileSync(identityPath(),'utf8').replace(/^\uFEFF/,''));const identity=JSON.parse(safeStorage.decryptString(Buffer.from(p.encrypted,'base64')));if(!valid(identity))throw Error();cache=identity;return identity;}catch{cache=undefined;throw Error('Cannot read this computer’s business identity. It may belong to another Windows computer/account or be damaged. In Manage Connection, import this business’s private link file. Existing identities are never replaced automatically.');}}
+
     const identity={businessId:crypto.randomUUID(),secret:crypto.randomBytes(32).toString('hex'),installationId:crypto.randomUUID()};save(identity);return identity;
   }
   const allowed=/^\/api\/garment\/(?:connection|connection-history(?:\?[a-zA-Z0-9%=&+_.-]*)?|school-links(?:\/[0-9a-f-]+\/(?:approve|reject))?|school-orders(?:\/[0-9a-f-]+\/(?:accept|reject|message))?)$/i;
@@ -69,6 +72,28 @@ function setupGarmentCloud({app,ipcMain,dialog,safeStorage,getWindow}){
     trusted(event);const id=load();await register();const result=await dialog.showSaveDialog(getWindow(),{title:'Private business link file — keep secret; only share with computers of this business',defaultPath:'garment-business-link.json',filters:[{name:'Business link',extensions:['json']}]});
     if(result.canceled||!result.filePath)return false;
     fs.writeFileSync(result.filePath,JSON.stringify({type:'threadflow-business-link',businessId:id.businessId,secret:id.secret}),{mode:0o600});return true;
+  });
+  ipcMain.handle('garment-business-reset',async(event,businessName='')=>{
+    trusted(event);if(resetting)throw Error('Connection reset is already in progress.');
+    if(typeof businessName!=='string'||businessName.trim().length>120)throw Error('Invalid business name');
+    resetting=true;
+    try{
+      const answer=await dialog.showMessageBox(getWindow(),{type:'warning',buttons:['Cancel','Back up and reset connection'],defaultId:0,cancelId:0,message:'Generate a new Garment Connection ID?',detail:'The previous identity will be preserved in a recovery file. Existing school links and cloud orders will stay under the old ID; schools must connect again using the new ID. Local stock, invoices, payments, measurements and salaries are unchanged. After resetting, export the new private business link and keep it safe.'});
+      if(answer.response!==1)return false;
+      if(!safeStorage.isEncryptionAvailable())throw Error('Windows secure credential storage is unavailable. Restart Windows and try again.');
+      await Promise.allSettled([registering,syncing,publishing].filter(Boolean));
+      const identity={businessId:crypto.randomUUID(),secret:crypto.randomBytes(32).toString('hex'),installationId:crypto.randomUUID()};
+      if(businessName.trim())identity.pendingBusinessName=businessName.trim();
+      // Verify encryption before touching the current identity; preserve original bytes.
+      safeStorage.encryptString(JSON.stringify(identity));
+      fs.mkdirSync(app.getPath('userData'),{recursive:true});
+      const suffix='.before-reset-'+Date.now()+'-'+crypto.randomUUID();
+      if(fs.existsSync(identityPath()))fs.copyFileSync(identityPath(),identityPath()+suffix,fs.constants.COPYFILE_EXCL);
+      if(fs.existsSync(snapshotPath()))fs.copyFileSync(snapshotPath(),snapshotPath()+suffix,fs.constants.COPYFILE_EXCL);
+      save(identity);registeredId=undefined;
+      // Registration uses this persisted identity on the next sync, including offline retry.
+      return true;
+    }finally{resetting=false;}
   });
   ipcMain.handle('garment-business-import',async event=>{
     trusted(event);const selected=await dialog.showOpenDialog(getWindow(),{title:'Link this computer to an existing garment business',properties:['openFile'],filters:[{name:'Private business link file',extensions:['json']}]});

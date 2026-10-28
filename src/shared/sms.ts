@@ -2,7 +2,10 @@
 
 import { garmentSmsRequest } from "./garmentSmsApi";
 
-export type SmsLanguage = "english" | "kannada" | "both";
+export type SmsLanguage = "english" | "kannada" | "hindi" | "both" | "hindi_english";
+
+export const smsLanguages: {value:SmsLanguage;label:string}[]=[{value:'english',label:'English'},{value:'kannada',label:'ಕನ್ನಡ (Kannada)'},{value:'hindi',label:'हिन्दी (Hindi)'},{value:'both',label:'Kannada + English'},{value:'hindi_english',label:'Hindi + English'}];
+export function smsText(language:SmsLanguage,en:string,kn:string,hi:string){return language==='kannada'?kn:language==='hindi'?hi:language==='both'?`${kn}\n\n${en}`:language==='hindi_english'?`${hi}\n\n${en}`:en;}
 
 export async function sendSmsViaGateway({
   recipientName,
@@ -70,9 +73,8 @@ export function formatSalarySms({
   const en = `Dear ${employeeName}, your salary for ${from} to ${to} is generated. Gross: Rs.${g}, Adv Deducted: Rs.${r}${roundText}, Net Paid: Rs.${n} via ${mode}. - ${companyName}`;
   const kn = `ಆತ್ಮೀಯ ${employeeName}, ${from} ರಿಂದ ${to} ರವರೆಗಿನ ನಿಮ್ಮ ವೇತನ: ಒಟ್ಟು: ರೂ.${g}, ಮುಂಗಡ ಕಡಿತ: ರೂ.${r}${roundTextKn}, ನಿವ್ವಳ ಪಾವತಿ: ರೂ.${n} (${mode} ಮೂಲಕ). - ${companyName}`;
 
-  if (language === "kannada") return kn;
-  if (language === "both") return `${en}\n\n[ಕನ್ನಡ ವಿವರ]:\n${kn}`;
-  return en;
+  const hi = `प्रिय ${employeeName}, ${from} से ${to} का वेतन: कुल रु.${g}, अग्रिम कटौती रु.${r}${roundOffAdjustment?`, राउंड ऑफ रु.${ro}`:''}, शुद्ध भुगतान रु.${n}, माध्यम ${mode}. - ${companyName}`;
+  return smsText(language,en,kn,hi);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -101,9 +103,8 @@ export function formatStockOutSms({
   const en = `Dear ${partyName}, ${count} pcs ${garment} (Size ${size}) has been dispatched/issued${ref} from ${companyName} on ${date}. - ${companyName}`;
   const kn = `ಆತ್ಮೀಯ ${partyName}, ${count} ಸಂಖ್ಯೆಯ ${garment} (ಅಳತೆ ${size}) ${companyName} ನಿಂದ ದಿನಾಂಕ ${date} ರಂದು ರವಾನಿಸಲಾಗಿದೆ. - ${companyName}`;
 
-  if (language === "kannada") return kn;
-  if (language === "both") return `${en}\n\n[ಕನ್ನಡ ವಿವರ]:\n${kn}`;
-  return en;
+  const hi = `प्रिय ${partyName}, ${count} नग ${garment} (साइज़ ${size}) ${date} को भेजे गए${ref}. - ${companyName}`;
+  return smsText(language,en,kn,hi);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,6 +115,9 @@ export function formatPaymentReceiptSms({
   receiptId,
   invoiceNo,
   amount,
+  billedAmount,
+  balanceAfter,
+  discount = 0,
   mode,
   companyName = "Your Business",
   language = "english",
@@ -122,6 +126,9 @@ export function formatPaymentReceiptSms({
   receiptId: string;
   invoiceNo: string;
   amount: number;
+  billedAmount?:number;
+  balanceAfter?:number;
+  discount?:number;
   mode: string;
   companyName?: string;
   language?: SmsLanguage;
@@ -130,9 +137,10 @@ export function formatPaymentReceiptSms({
   const en = `Dear ${customerName}, Payment of Rs.${amt} received against Inv #${invoiceNo} (Receipt #${receiptId}) via ${mode}. Thank you! - ${companyName}`;
   const kn = `ಆತ್ಮೀಯ ${customerName}, ಇನ್‌ವಾಯ್ಸ್ #${invoiceNo} ಗಾಗಿ ರೂ.${amt} ಪಾವತಿ (${mode} ಮೂಲಕ) ಸ್ವೀಕರಿಸಲಾಗಿದೆ. ರಸೀದಿ #${receiptId}. ಧನ್ಯವಾದಗಳು! - ${companyName}`;
 
-  if (language === "kannada") return kn;
-  if (language === "both") return `${en}\n\n[ಕನ್ನಡ ವಿವರ]:\n${kn}`;
-  return en;
+  const hi = `प्रिय ${customerName}, बिल #${invoiceNo} के लिए रु.${amt} प्राप्त हुए. रसीद #${receiptId}, माध्यम ${mode}. धन्यवाद! - ${companyName}`;
+  const billed=billedAmount===undefined?'':billedAmount.toLocaleString('en-IN');
+  const pending=balanceAfter===undefined?'':balanceAfter.toLocaleString('en-IN');
+  return smsText(language,en+(billed?` Billed: Rs.${billed}.`:'')+(discount?` Discount: Rs.${discount}.`:'')+(pending?` Pending after payment: Rs.${pending}.`:''),kn+(billed?` ಬಿಲ್ ಮೊತ್ತ: ರೂ.${billed}.`:'')+(discount?` ರಿಯಾಯಿತಿ: ರೂ.${discount}.`:'')+(pending?` ಪಾವತಿಯ ನಂತರ ಬಾಕಿ: ರೂ.${pending}.`:''),hi+(billed?` बिल राशि: रु.${billed}.`:'')+(discount?` छूट: रु.${discount}.`:'')+(pending?` भुगतान के बाद बकाया: रु.${pending}.`:''));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -171,7 +179,6 @@ export function formatOrderStatusSms({
   const en = `Dear ${schoolName}, Uniform Order #${orderRef} (${totalQty || 0} pcs) status is ${enStatus}.${deliveryDate ? ` Delivery by: ${deliveryDate}.` : ""} - ${companyName}`;
   const kn = `ಆತ್ಮೀಯ ${schoolName}, ಸಮವಸ್ತ್ರ ಆರ್ಡರ್ #${orderRef} (${totalQty || 0} ತುಂಡುಗಳು) ಸ್ಥಿತಿ: ${knStatus}.${deliveryDate ? ` ನಿಗದಿತ ದಿನಾಂಕ: ${deliveryDate}.` : ""} - ${companyName}`;
 
-  if (language === "kannada") return kn;
-  if (language === "both") return `${en}\n\n[ಕನ್ನಡ]:\n${kn}`;
-  return en;
+  const hi = `प्रिय ${schoolName}, यूनिफॉर्म ऑर्डर #${orderRef}, ${totalQty||0} नग, स्थिति: ${status}.${deliveryDate?` डिलीवरी तिथि: ${deliveryDate}.`:''} - ${companyName}`;
+  return smsText(language,en,kn,hi);
 }

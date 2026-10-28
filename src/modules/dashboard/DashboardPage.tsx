@@ -3,7 +3,6 @@ import type { BusinessMode } from '../../shared/commerce';
 import type { ProductionOrder } from '../../shared/GeneralProduction';
 import { useState } from 'react';
 import { Boxes, CheckCircle2, IndianRupee, ReceiptText } from 'lucide-react';
-import { buildIncomeEntries } from '../../shared/income';
 import { Stats, Table } from '../../shared/ui';
 import { money } from '../../shared/utils';
 import { useCommerceState, useCommerce } from '../../shared/CommerceContext';
@@ -18,7 +17,7 @@ export function DashboardPage({ assignments, schools, students }: { assignments:
   const [businessMode]=useCommerceState<BusinessMode>('garment-business-mode','both');
   const [generalOrders]=useCommerceState<ProductionOrder[]>('garment-general-production',[]);
   const [customers]=useCommerceState<string[][]>('garment-customers',[]);
-  const [chartHover,setChartHover] = useState<'collection'|'expense'|null>(null);
+  const [chartHover,setChartHover] = useState<string|null>(null);
   const now = new Date();
   const currentFyStart = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
   const [fy, setFy] = useState(`${currentFyStart}-${String((currentFyStart + 1) % 100).padStart(2, '0')}`);
@@ -28,7 +27,6 @@ export function DashboardPage({ assignments, schools, students }: { assignments:
   const [payments] = useCommerceState<InvoicePayment[]>('garment-invoice-payments', []);
   const [schoolStock] = useCommerceState<SchoolStock[]>('garment-school-stock', []);
   const [sales] = useCommerceState<StockSale[]>('garment-stock-sales', []);
-  const [collections] = useCommerceState<string[][]>('garment-school-collections', []);
   const [expenses] = useCommerceState<string[][]>('garment-expenses', []);
   const [salaryHistory] = useCommerceState<SalaryPayment[]>('garment-salary-history', []);
 
@@ -39,8 +37,6 @@ export function DashboardPage({ assignments, schools, students }: { assignments:
   const periodSales = sales.filter(sale => sale.fulfilment!=='reserved' && inPeriod(sale.date));
   const periodExpenses = expenses.filter(row => inPeriod(row[5]));
   const paidFor = (invoiceNo: string) => payments.filter(payment => payment.invoiceNo === invoiceNo).reduce((sum, payment) => sum + Number(payment.amount || 0) + Number(payment.discount || 0), 0);
-  const collectionEntries = buildIncomeEntries(invoices, payments, collections).filter(entry => inPeriod(entry.date));
-  const totalCollected = collectionEntries.reduce((sum, entry) => sum + entry.amount, 0);
   const totalDiscounted = periodPayments.filter(payment=>payment.mode!=='Return credit').reduce((sum, payment) => sum + Number(payment.discount || 0), 0);
   const outstanding = periodInvoices.reduce((sum, invoice) => sum + Math.max(0, invoice.totalAmount - paidFor(invoice.invoiceNo)), 0);
   const periodSalaries = salaryHistory.filter(payment => inPeriod(payment.paidDate));
@@ -65,9 +61,16 @@ export function DashboardPage({ assignments, schools, students }: { assignments:
     const due = schoolInvoices.reduce((sum, invoice) => sum + Math.max(0, invoice.totalAmount - paidFor(invoice.invoiceNo)), 0);
     return [school.name, String(schoolStudents.length), String(measured), `${delivered} Pcs`, money(billed), money(due), due > 0 ? 'Payment Due' : billed > 0 ? 'Clear' : 'No Billing'];
   });
-  const chartTotal = totalCollected + expenseTotal;
-  const collectionPercent = chartTotal > 0 ? totalCollected / chartTotal * 100 : 0;
-  const expensePercent = chartTotal > 0 ? expenseTotal / chartTotal * 100 : 0;
+  const expenseCategories=new Map<string,{name:string;amount:number}>();
+  const addExpense=(category:string,amount:number)=>{if(!Number.isFinite(amount)||amount<=0)return;const name=category.trim()||'Other expenses';const key=name.toLowerCase();const current=expenseCategories.get(key);expenseCategories.set(key,{name:current?.name||name,amount:(current?.amount||0)+amount});};
+  periodExpenses.forEach(row=>addExpense(row[3]||'Other expenses',parseMoney(row[6])));
+  addExpense('Staff salaries',staffSalaryTotal);
+  const palette=['#0f766e','#2563eb','#f59e0b','#9333ea','#e11d48','#0891b2','#65a30d','#c2410c'];
+  const chartTotal=Array.from(expenseCategories.values()).reduce((sum,row)=>sum+row.amount,0);
+  let cumulative=0;
+  const expenseSlices=Array.from(expenseCategories.values()).sort((a,b)=>b.amount-a.amount||a.name.localeCompare(b.name)).map((row,index)=>{const start=cumulative;const percent=chartTotal?row.amount/chartTotal*100:0;cumulative+=percent;return {...row,percent,start,end:cumulative,colour:palette[index%palette.length]};});
+  const hoveredExpense=expenseSlices.find(row=>row.name===chartHover);
+  const chartBackground=expenseSlices.length?`conic-gradient(${expenseSlices.map(row=>`${row.colour} ${row.start}% ${row.end}%`).join(', ')})`:'#e4eeeb';
 
   return <section className="content dashboard-page business-dashboard">
     <div className="dashboard-heading"><div><span>BUSINESS OVERVIEW</span><h1>Garment ERP Dashboard</h1><p>Orders, production, stock, delivery and payment position at a glance.</p></div><div className="filterbar salary-filter yearwise-filter"><label>Financial Year<select value={fy} onChange={event => changeFy(event.target.value)}><option>{`${currentFyStart}-${String((currentFyStart + 1) % 100).padStart(2, '0')}`}</option><option>{`${currentFyStart - 1}-${String(currentFyStart % 100).padStart(2, '0')}`}</option></select></label><label>From<input type="date" value={from} onChange={event => setFrom(event.target.value)} /></label><label>To<input type="date" value={to} onChange={event => setTo(event.target.value)} /></label></div></div>
@@ -75,16 +78,15 @@ export function DashboardPage({ assignments, schools, students }: { assignments:
     <Stats values={[["Discounted", money(totalDiscounted), "settlement discounts / waivers"], ["Outstanding Due", money(outstanding), `${pendingInvoices.length} pending invoices`], ["Expenses", money(expenseTotal), `${expenseEntryCount} entries, including ${periodSalaries.length} salary payments`]]} />
     <div className="dashboard-summary-grid">
     <article className="card dashboard-finance-chart">
-      <div className="cardhead"><div><h2>Total collection &amp; expenses</h2><p>Cash collected and expenses in the selected period</p></div></div>
+      <div className="cardhead"><div><h2>Expenses by category</h2><p>Expense entries and staff salaries in the selected period</p></div></div>
       <div className="dashboard-finance-chart-body">
         <div className="dashboard-finance-pie-wrap" onMouseLeave={()=>setChartHover(null)}>
-        <div className="dashboard-finance-pie" tabIndex={0} onFocus={()=>setChartHover('expense')} onBlur={()=>setChartHover(null)} onMouseMove={event=>{if(!chartTotal)return;const rect=event.currentTarget.getBoundingClientRect();const angle=(Math.atan2(event.clientX-rect.left-rect.width/2,-(event.clientY-rect.top-rect.height/2))*180/Math.PI+360)%360;setChartHover(angle<collectionPercent*3.6?'collection':'expense')}} role="img" aria-label={chartTotal > 0 ? `Total collection ${money(totalCollected)}, ${collectionPercent.toFixed(1)} percent; expenses ${money(expenseTotal)}, ${expensePercent.toFixed(1)} percent` : 'No collections or expenses in the selected period'} style={{background:chartTotal > 0 ? `conic-gradient(#14b8a6 0% ${collectionPercent}%, #22c55e ${collectionPercent}% 100%)` : '#e4eeeb'}}><div className="dashboard-donut-center"><strong>{money(totalCollected)}</strong><span>Total collection</span><small>{new Date(`${from}T00:00:00`).toLocaleDateString('en-IN',{month:'short',year:'2-digit'})} ? {new Date(`${to}T00:00:00`).toLocaleDateString('en-IN',{month:'short',year:'2-digit'})}</small></div></div>
-        {chartHover&&chartTotal>0&&<div className="dashboard-chart-tooltip" role="tooltip">{chartHover==='collection'?<><b>Total collection</b><span>{money(totalCollected)}</span></>:<><b>Expenses</b><span>Staff salary: {money(staffSalaryTotal)}</span><span>Other expenses: {money(expenseTotal-staffSalaryTotal)}</span><strong>Total: {money(expenseTotal)}</strong></>}</div>}
+          <div className="dashboard-finance-pie" role="img" aria-label={expenseSlices.length?`Expenses by category: ${expenseSlices.map(row=>`${row.name} ${money(row.amount)}, ${row.percent.toFixed(1)} percent`).join('; ')}`:'No expenses in the selected period'} onMouseMove={event=>{if(!expenseSlices.length)return;const rect=event.currentTarget.getBoundingClientRect();const angle=(Math.atan2(event.clientX-rect.left-rect.width/2,-(event.clientY-rect.top-rect.height/2))*180/Math.PI+360)%360;setChartHover(expenseSlices.find(row=>angle/3.6>=row.start&&angle/3.6<row.end)?.name||null);}} style={{background:chartBackground}}><div className="dashboard-donut-center"><strong>{money(chartTotal)}</strong><span>Total expenses</span><small>{new Date(`${from}T00:00:00`).toLocaleDateString('en-IN',{month:'short',year:'2-digit'})} – {new Date(`${to}T00:00:00`).toLocaleDateString('en-IN',{month:'short',year:'2-digit'})}</small></div></div>
+          {hoveredExpense&&<div className="dashboard-chart-tooltip" role="tooltip"><b>{hoveredExpense.name}</b><span>{money(hoveredExpense.amount)}</span><span>{hoveredExpense.percent.toFixed(1)}%</span></div>}
         </div>
-        <div className="dashboard-finance-legend">
-          <div><span className="finance-chart-dot collection"/><span>Total collection<strong>{money(totalCollected)}</strong></span><b>{collectionPercent.toFixed(1)}%</b></div>
-          <div><span className="finance-chart-dot expense"/><span>Expenses<strong>{money(expenseTotal)}</strong><small>Staff salary: {money(staffSalaryTotal)}</small></span><b>{expensePercent.toFixed(1)}%</b></div>
-          {chartTotal === 0 && <p>No collections or expenses in the selected period.</p>}
+        <div className="dashboard-finance-legend dashboard-expense-legend">
+          {expenseSlices.map(row=><div key={row.name} tabIndex={0} onFocus={()=>setChartHover(row.name)} onBlur={()=>setChartHover(null)} onMouseEnter={()=>setChartHover(row.name)} onMouseLeave={()=>setChartHover(null)}><span className="finance-chart-dot" style={{background:row.colour}}/><span>{row.name}<strong>{money(row.amount)}</strong></span><b>{row.percent.toFixed(1)}%</b></div>)}
+          {!expenseSlices.length&&<p>No expenses in the selected period.</p>}
         </div>
       </div>
     </article>

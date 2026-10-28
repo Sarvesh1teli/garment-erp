@@ -8,5 +8,6 @@ contextBridge.exposeInMainWorld('threadflow', {
   publishGarmentTypes: types => ipcRenderer.invoke('garment-catalog-publish',types),
   syncGarmentBusinessName: name => ipcRenderer.invoke('garment-business-name',name),
   exportGarmentBusiness: () => ipcRenderer.invoke('garment-business-export'),
+  resetGarmentBusiness: businessName => ipcRenderer.invoke('garment-business-reset',businessName),
   importGarmentBusiness: () => ipcRenderer.invoke('garment-business-import'),
 });

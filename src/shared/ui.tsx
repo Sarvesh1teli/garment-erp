@@ -148,7 +148,8 @@ export function BarcodeScannerModal({onScan,onClose}:{onScan:(code:string)=>void
   </article></div>}
 
 export function Title({title,copy}:{title:string,copy:string}){return <div className="welcome"><div><p>GARMENT PRODUCTION ERP</p><h1>{title}</h1><span>{copy}</span></div></div>}
-export function Stats({values,className}:{values:string[][];className?:string}){const icons=[<Users/>,<Scissors/>,<IndianRupee/>,<AlertTriangle/>];return <div className={'metrics'+(className?` ${className}`:'')}>{values.map((v,i)=><Metric key={v[0]} title={v[0]} value={v[1]} note={v[2]} icon={icons[i%icons.length]} tone={['blue','purple','green','orange'][i%icons.length]}/>)}</div>}
+export function Stats({values,className,onSelect}:{values:string[][];className?:string;onSelect?:(title:string)=>void}){const icons=[<Users/>,<Scissors/>,<IndianRupee/>,<AlertTriangle/>];return <div className={'metrics'+(className?` ${className}`:'')}>{values.map((v,i)=>{const card=<Metric title={v[0]} value={v[1]} note={v[2]} icon={icons[i%icons.length]} tone={['blue','purple','green','orange'][i%icons.length]}/>;return onSelect?<button key={v[0]} type="button" className="metric-filter-button" onClick={()=>onSelect(v[0])} aria-label={`Filter ${v[0]}`}>{card}</button>:<Metric key={v[0]} title={v[0]} value={v[1]} note={v[2]} icon={icons[i%icons.length]} tone={['blue','purple','green','orange'][i%icons.length]}/>;})}</div>}
+
 export function Table({title,copy,headers,rows,actions,paged=false,sortable=false,total,action,onRowClick}:{title:string;copy:string;headers:string[];rows:string[][];actions?:(row:string[])=>React.ReactNode;paged?:boolean;sortable?:boolean;total?:string;action?:React.ReactNode;onRowClick?:(row:string[])=>void}){
   const [sort,setSort]=useState<{column:number;direction:1|-1}|null>(null);
   const [search,setSearch]=useState('');

@@ -8,7 +8,7 @@ export function GarmentSmsAction({referenceType,referenceId,name,phone,format}:{
  const [draft,setDraft]=useState<SmsDraft|null>(null),[language,setLanguage]=useState<SmsLanguage>('english');
  const [sending,setSending]=useState(false),[notice,setNotice]=useState(''),[status,setStatus]=useState('');
  useEffect(()=>{let alive=true;setStatus('');setNotice('');setDraft(null);
-  garmentSmsRequest('/api/v1/sms-settings').then(data=>{if(!alive)return;if(['english','kannada','both'].includes(data.language))setLanguage(data.language);const job=data.recentJobs?.find((j:{reference?:string})=>j.reference===`${referenceType}:${referenceId}`);if(job)setStatus(job.status);}).catch(()=>{});
+  garmentSmsRequest('/api/v1/sms-settings').then(data=>{if(!alive)return;if(['english','kannada','hindi','both','hindi_english'].includes(data.language))setLanguage(data.language);const job=data.recentJobs?.find((j:{reference?:string})=>j.reference===`${referenceType}:${referenceId}`);if(job)setStatus(job.status);}).catch(()=>{});
   return()=>{alive=false;};
  },[referenceType,referenceId]);
  const send=async()=>{if(!draft)return;setSending(true);setNotice('');

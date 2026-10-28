@@ -1,0 +1,2 @@
+export function currentFinancialYear(date=new Date()){const start=date.getMonth()>=3?date.getFullYear():date.getFullYear()-1;return `${start}-${String(start+1).slice(2)}`;}
+export function inFinancialYear(date:string,year:string){if(year==='All')return true;if(!date)return false;const start=Number(year.slice(0,4));return year.length===4?date.startsWith(year):date>=`${start}-04-01`&&date<=`${start+1}-03-31`;}

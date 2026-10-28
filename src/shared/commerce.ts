@@ -1,12 +1,12 @@
-import type { CustomerStock, Invoice, InvoiceItem, InvoicePayment, SchoolStock, StockSale } from './types';
+import type { ProductDetails, CustomerStock, Invoice, InvoiceItem, InvoicePayment, SchoolStock, StockSale } from './types';
 
 export type BusinessMode='shop'|'school'|'both';
 export type StockOwner='general'|'school'|'customer';
-export type ReadyBalance={colour?:string;key:string;owner:StockOwner;party:string;gender:string;garment:string;size:string;added:number;physical:number;reserved:number;available:number};
-export type RetailLine={colour?:string;stockKey:string;owner:StockOwner;party:string;gender:string;garment:string;size:string;quantity:number;rate:number};
+export type ReadyBalance=ProductDetails&{colour?:string;key:string;owner:StockOwner;party:string;gender:string;garment:string;size:string;added:number;physical:number;reserved:number;available:number};
+export type RetailLine=ProductDetails&{colour?:string;stockKey:string;owner:StockOwner;party:string;gender:string;garment:string;size:string;quantity:number;rate:number};
 export type RetailSale={id:string;invoice:Invoice;legacyInvoice?:boolean;lines:RetailLine[];payment?:InvoicePayment;status:'reserved'|'dispatched'|'returned'|'cancelled';dispatchDate?:string;returnDate?:string;refund?:InvoicePayment;credit?:InvoicePayment;reason?:string};
 export type QuickSaleDraft={reuseInvoiceNo?:string;date:string;customer:string;phone:string;mode:'Cash'|'UPI'|'Bank'|'Credit';dispatch:'now'|'later';tax:number;amountReceived?:number;discount?:number;discountType?:'flat'|'percentage';lines:{stockKey:string;quantity:number;rate:number}[]};
-export const stockKey=(owner:StockOwner,party:string,gender:string,garment:string,size:string,colour='')=>JSON.stringify(colour.trim()?[owner,party,gender,garment,size,colour.trim().toLowerCase()]:[owner,party,gender,garment,size]);
+export const stockKey=(owner:StockOwner,party:string,gender:string,garment:string,size:string,colour='',productId='')=>JSON.stringify(productId?[owner,party,gender,garment,size,colour.trim().toLowerCase(),productId]:colour.trim()?[owner,party,gender,garment,size,colour.trim().toLowerCase()]:[owner,party,gender,garment,size]);
 export const isRetailRecord=(value:string)=>value.startsWith('retail:');
 export const retailInvoiceNumbers=(ledger:RetailSale[],includeLegacy=false)=>new Set(ledger.flatMap(sale=>[...(!sale.legacyInvoice||includeLegacy?[sale.invoice.invoiceNo]:[]),...(sale.returnDate?[`CR-${sale.invoice.invoiceNo}`]:[])]));
 
@@ -23,7 +23,7 @@ export function projectRetail(ledger:RetailSale[],extraPayments:InvoicePayment[]
     }
     if(sale.status==='cancelled')continue;
     const first=sale.lines[0];if(!first)continue;
-    const items:InvoiceItem[]=sale.lines.map(row=>({colour:row.colour,gender:row.gender,garment:row.garment,size:row.size,qty:row.quantity,rate:row.rate,amount:round(row.quantity*row.rate)}));
+    const items:InvoiceItem[]=sale.lines.map(row=>({productId:row.productId,productName:row.productName,brand:row.brand,colour:row.colour,gender:row.gender,garment:row.garment,size:row.size,qty:row.quantity,rate:row.rate,amount:round(row.quantity*row.rate)}));
     const issued:StockSale={id:`retail:${sale.id}`,date:sale.dispatchDate||sale.invoice.invoiceDate,type:first.owner==='customer'?'Customer':'School',party:first.party,gender:first.gender,garment:items.map(row=>row.garment).join(', '),size:items.map(row=>row.size).join(', '),count:sale.invoice.qty,rate:0,total:sale.invoice.totalAmount,invoiceNo:sale.invoice.invoiceNo,remarks:sale.status==='reserved'?'Reserved for later delivery':'Quick Sale dispatch',items,fulfilment:sale.status==='reserved'?'reserved':'delivered'};
     sales.push(issued);
     if(sale.status==='returned')sales.push({...issued,id:`retail:${sale.id}:return`,invoiceNo:`CR-${sale.invoice.invoiceNo}`,date:sale.returnDate!,count:-issued.count,total:-issued.total,items:items.map(row=>({...row,qty:-row.qty,amount:-row.amount})),remarks:'Full return — stock restored',fulfilment:'returned'});
@@ -34,16 +34,18 @@ const round=(value:number)=>Math.round((value+Number.EPSILON)*100)/100;
 
 export function readyBalances(school:SchoolStock[],customer:CustomerStock[],sales:StockSale[]):ReadyBalance[]{
   const groups=new Map<string,ReadyBalance>();
-  const add=(owner:StockOwner,party:string,gender:string,garment:string,size:string,qty:number,colour='')=>{
-    const key=stockKey(owner,party,gender,garment,size,colour),current=groups.get(key);
-    if(current){current.added+=qty;current.physical+=qty;}else groups.set(key,{key,owner,party,gender,garment,size,colour:colour.trim(),added:qty,physical:qty,reserved:0,available:qty});
+  const add=(owner:StockOwner,party:string,gender:string,garment:string,size:string,qty:number,colour='',product:ProductDetails={})=>{
+    const key=stockKey(owner,party,gender,garment,size,colour,product.productId),current=groups.get(key);
+    if(current){current.added+=qty;current.physical+=qty;}else groups.set(key,{productId:product.productId,productName:product.productName,brand:product.brand,key,owner,party,gender,garment,size,colour:colour.trim(),added:qty,physical:qty,reserved:0,available:qty});
   };
-  school.forEach(row=>add(row.school?'school':'general',row.school||'',row.gender||'Common',row.garment,row.size,Number(row.count)||0,row.colour));
-  customer.forEach(row=>add('customer',row.customer,row.gender||'Common',row.garment,row.size,Number(row.count)||0,row.colour));
+  school.forEach(row=>add(row.school?'school':'general',row.school||'',row.gender||'Common',row.garment,row.size,Number(row.count)||0,row.colour,row));
+  customer.forEach(row=>add('customer',row.customer,row.gender||'Common',row.garment,row.size,Number(row.count)||0,row.colour,row));
   for(const sale of sales){
     const owner:StockOwner=sale.type==='Customer'?'customer':sale.party?'school':'general';
-    for(const item of sale.items?.length?sale.items:[{garment:sale.garment,size:sale.size,gender:sale.gender,qty:sale.count,colour:sale.colour}]){
+    for(const item of sale.items?.length?sale.items:[{garment:sale.garment,size:sale.size,gender:sale.gender,qty:sale.count,colour:sale.colour,productId:sale.productId}]){
       let matches=Array.from(groups.values()).filter(row=>row.owner===owner&&row.party===sale.party&&row.garment===item.garment&&row.size===item.size);
+      const productId=item.productId??sale.productId;
+      matches=matches.filter(row=>(row.productId||'')===(productId||''));
       const colour=item.colour??sale.colour;
       if(colour!==undefined)matches=matches.filter(row=>(row.colour||'').trim().toLowerCase()===colour.trim().toLowerCase());
       else {const uncoloured=matches.filter(row=>!row.colour);if(uncoloured.length)matches=uncoloured;}
@@ -70,7 +72,7 @@ export function createRetailSale(ledger:RetailSale[],balances:ReadyBalance[],exi
     if(!stock||!Number.isSafeInteger(row.quantity)||row.quantity<=0||!Number.isFinite(row.rate)||row.rate<0)throw Error(`Row ${index+1}: select available stock, whole quantity and valid price.`);
     requested.set(stock.key,(requested.get(stock.key)||0)+row.quantity);
     if(requested.get(stock.key)!>stock.available)throw Error(`Only ${stock.available} available for ${stock.garment}, size ${stock.size}.`);
-    return {stockKey:stock.key,colour:stock.colour,owner:stock.owner,party:stock.party,gender:stock.gender,garment:stock.garment,size:stock.size,quantity:row.quantity,rate:round(row.rate)};
+    return {productId:stock.productId,productName:stock.productName,brand:stock.brand,stockKey:stock.key,colour:stock.colour,owner:stock.owner,party:stock.party,gender:stock.gender,garment:stock.garment,size:stock.size,quantity:row.quantity,rate:round(row.rate)};
   });
   const first=lines[0];if(lines.some(row=>row.owner!==first.owner||row.party!==first.party))throw Error('Use one stock owner per bill.');
   const gross=round(lines.reduce((sum,row)=>sum+row.quantity*row.rate,0));
@@ -86,14 +88,14 @@ export function createRetailSale(ledger:RetailSale[],balances:ReadyBalance[],exi
   const numbers=[...existingInvoices,...ledger.map(row=>row.invoice)];
   const next=numbers.reduce((max,row)=>Math.max(max,Number(/^QS-(\d+)$/i.exec(row.invoiceNo)?.[1]||0)),0)+1;
   const invoiceNo=`QS-${String(next).padStart(6,'0')}`,customer=first.owner==='general'?(draft.customer.trim()||'Walk-in Customer'):first.party;
-  const items=lines.map(row=>({colour:row.colour,gender:row.gender,garment:row.garment,size:row.size,qty:row.quantity,rate:row.rate,amount:round(row.quantity*row.rate)}));
-  const invoice:Invoice={invoiceNo,invoiceDate:draft.date,dueDate:'',state:'',reverseCharge:'NO',customer,customerPhone:draft.phone.trim(),customerGst:'',customerAddress:'',shipTo:customer,shipAddress:'',shipGst:'',product:items.map(row=>`${row.garment} (${row.size})${row.colour?` / ${row.colour}`:''}`).join(', '),hsn:'',qty:lines.reduce((sum,row)=>sum+row.quantity,0),unit:'PCS',rate:0,cgst:draft.tax/2,sgst:draft.tax/2,gstPercent:draft.tax,taxableAmount:taxable,totalAmount:total,status:received>=total?'Paid':received>0?'Partially Paid':'Pending',terms:'Goods sold from available ready stock.',discount,discountType:'flat',grossAmount:gross,items};
+  const items=lines.map(row=>({productId:row.productId,productName:row.productName,brand:row.brand,colour:row.colour,gender:row.gender,garment:row.garment,size:row.size,qty:row.quantity,rate:row.rate,amount:round(row.quantity*row.rate)}));
+  const invoice:Invoice={invoiceNo,invoiceDate:draft.date,dueDate:'',state:'',reverseCharge:'NO',customer,customerPhone:draft.phone.trim(),customerGst:'',customerAddress:'',shipTo:customer,shipAddress:'',shipGst:'',product:items.map(row=>`${row.productName||row.garment}${row.brand?` / ${row.brand}`:''} (${row.size})${row.colour?` / ${row.colour}`:''}`).join(', '),hsn:'',qty:lines.reduce((sum,row)=>sum+row.quantity,0),unit:'PCS',rate:0,cgst:draft.tax/2,sgst:draft.tax/2,gstPercent:draft.tax,taxableAmount:taxable,totalAmount:total,status:received>=total?'Paid':received>0?'Partially Paid':'Pending',terms:'Goods sold from available ready stock.',discount,discountType:'flat',grossAmount:gross,items};
   if(draft.reuseInvoiceNo){
     const existing=existingInvoices.find(row=>row.invoiceNo===draft.reuseInvoiceNo);
     if(!existing||ledger.some(row=>row.invoice.invoiceNo===draft.reuseInvoiceNo))throw Error('This invoice is unavailable or already linked to a dispatch.');
     if(existing.customer!==customer||existing.qty!==invoice.qty||Math.abs(existing.taxableAmount-taxable)>.01)throw Error('Customer, stock quantities and prices must match the existing invoice.');
     if(existing.items?.length){
-      const quantities=(rows:{garment:string;size:string;qty:number}[])=>{const groups=new Map<string,number>();for(const row of rows){const key=JSON.stringify([row.garment,row.size]);groups.set(key,(groups.get(key)||0)+row.qty);}return JSON.stringify(Array.from(groups).sort());};
+      const quantities=(rows:{garment:string;size:string;qty:number;productId?:string}[])=>{const groups=new Map<string,number>();for(const row of rows){const key=JSON.stringify([row.garment,row.size,row.productId||'']);groups.set(key,(groups.get(key)||0)+row.qty);}return JSON.stringify(Array.from(groups).sort());};
       if(quantities(existing.items)!==quantities(items))throw Error('Garments and sizes must match the existing invoice.');
     }
     return {id,invoice:{...existing},legacyInvoice:true,lines,status:draft.dispatch==='now'?'dispatched':'reserved',dispatchDate:draft.dispatch==='now'?draft.date:undefined};

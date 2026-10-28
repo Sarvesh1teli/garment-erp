@@ -98,7 +98,7 @@ function createGarmentSmsRelay({ database: db, dataDirectory, subscriptionActive
   function update(tenant, patch) {
     const row=get(tenant), next={...row.settings};
     for(const key of ['enabled','autoInvoice','contacts','triggers','language']) if(patch[key]!==undefined)next[key]=patch[key];
-    if(!['english','kannada','both'].includes(next.language))throw new Error('Invalid SMS language');
+    if(!['english','kannada','hindi','both','hindi_english'].includes(next.language))throw new Error('Invalid SMS language');
     db.prepare('UPDATE garment_cloud_sms_config SET settings=? WHERE tenant=?').run(JSON.stringify(next),tenant);
     return settings(tenant);
   }
@@ -124,6 +124,7 @@ function invoiceMessage(invoice, company, language='english') {
   const more=Math.max(0,items.length-3);
   const en=`${String(company||'Garment business').slice(0,80)}: Invoice ${invoice.invoiceNo}, ${invoice.invoiceDate}. Items: ${summary}${more?`, +${more} more items`:''}. Total Rs.${money(invoice.totalAmount)}. Thank you.`;
   const kn=`${String(company||'Garment business').slice(0,80)}: ಬಿಲ್ ${invoice.invoiceNo}, ${invoice.invoiceDate}. ಉತ್ಪನ್ನಗಳು: ${summary}${more?`, ಇನ್ನೂ ${more} ಉತ್ಪನ್ನಗಳು`:''}. ಒಟ್ಟು ರೂ.${money(invoice.totalAmount)}. ಧನ್ಯವಾದಗಳು.`;
-  return language==='kannada'?kn:language==='both'?en+'\n\n'+kn:en;
+  const hi=`${company||'Garment business'}: बिल ${invoice.invoiceNo}, ${invoice.invoiceDate}. वस्तुएं: ${summary}. कुल रु.${money(invoice.totalAmount)}. धन्यवाद.`;
+  return language==='hindi'?hi:language==='hindi_english'?hi+'\n\n'+en:language==='kannada'?kn:language==='both'?kn+'\n\n'+en:en;
 }
 module.exports={createGarmentSmsRelay,invoiceMessage,CLOUD};

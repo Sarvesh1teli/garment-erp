@@ -169,7 +169,7 @@ body{font-size:15px;background:#eef5f2;font-family:'DM Sans',system-ui,-apple-sy
   z-index: 9998;
 }
 
-@media (max-width: 768px) {
+@media screen and (max-width: 768px) {
   .mobile-header-bar {
     display: flex !important;
   }
@@ -1708,3 +1708,42 @@ body{font-size:15px;background:#eef5f2;font-family:'DM Sans',system-ui,-apple-sy
 @media print{.quick-sale-receipt.sale-invoice-sheet{max-width:190mm;border:1px solid #243b53;padding:0;print-color-adjust:exact}.sale-invoice-sheet thead{display:table-header-group}.sale-invoice-sheet tr{break-inside:avoid}}
 
 .payment-pay-now-field{display:flex;align-items:flex-end;gap:8px;min-width:0}.payment-pay-now-field label{flex:1;min-width:0}.payment-pay-now-field .outline{flex-shrink:0;min-height:40px;white-space:nowrap}.payment-pay-now-field input{width:100%}.form-grid input[readonly]{background:#f3f7f8;color:#334e68;font-weight:600}
+
+.stock-product-selector{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin:16px 0}.stock-product-selector label{flex:1;min-width:230px;display:grid;gap:6px;font-size:12px}.stock-product-selector select{width:100%;padding:10px;border:1px solid #adc4c4;border-radius:6px}.stock-product-selector small{flex-basis:100%;color:#526964}.product-create-overlay{z-index:11000!important}.product-create-overlay .entry-modal{max-width:700px}
+
+.metric-filter-button{appearance:none;border:0;background:none;padding:0;text-align:left;cursor:pointer;color:inherit;min-width:0;font:inherit}.metric-filter-button .metric{height:100%;box-sizing:border-box}.metric-filter-button:hover .metric{filter:brightness(.97)}.metric-filter-button:focus-visible{outline:2px solid #f59e0b;outline-offset:3px;border-radius:9px}.billing-year-filter{margin:12px 0;align-items:center}.billing-year-filter select{min-width:140px}
+
+/* Flat, consistent summary cards for both static and clickable metrics. */
+.app .metrics>:is(.metric,.metric-filter-button){--card-bg:#1e40af;--card-text:#fff;border-radius:9px;box-shadow:none!important}
+.app .metrics>:is(.metric,.metric-filter-button):nth-child(5n+2){--card-bg:#fbbf24;--card-text:#422006}
+.app .metrics>:is(.metric,.metric-filter-button):nth-child(5n+3){--card-bg:#047857;--card-text:#fff}
+.app .metrics>:is(.metric,.metric-filter-button):nth-child(5n+4){--card-bg:#be185d;--card-text:#fff}
+.app .metrics>:is(.metric,.metric-filter-button):nth-child(5n+5){--card-bg:#0f766e;--card-text:#fff}
+.app .metrics>.metric,.app .metrics>.metric-filter-button>.metric{background:var(--card-bg)!important;border-color:var(--card-bg)!important;color:var(--card-text)!important;box-shadow:none!important;background-image:none!important}
+.app .metrics .metric :is(span,strong,small){color:var(--card-text)!important}.app .metrics .metric .metricicon{background:#ffffff26!important;color:var(--card-text)!important}.app .metrics .metric:after,.app .metrics .metric:before{display:none!important}
+.sales-history-summary,.billing-summary{margin:12px 0}.payment-workspace>.billing-summary{margin:12px 20px}.quick-sales-filters,.school-collection-filters,.payment-history-filters{flex-wrap:wrap;gap:12px}.quick-sales-filters label,.school-collection-filters label,.payment-history-filters label{min-width:130px;flex:1 1 140px}.quick-sales-filters label:first-child,.payment-history-filters label:first-child,.school-collection-filters label:first-child{max-width:160px}
+
+
+/* Keep signature areas compact on screen and on paper. */
+.salary-doc .salary-footer,.print-preview-shell .salary-doc .salary-footer{margin-top:0!important}
+.salary-doc .salary-footer>div,.print-preview-shell .salary-doc .salary-footer>div{min-height:64px;padding:10px 14px}
+.salary-doc .salary-footer h3,.print-preview-shell .salary-doc .salary-footer h3{margin:0 0 12px;font-size:12px}
+.print-preview-shell .salary-doc{min-height:0}
+.stock-records-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:14px 0}.stock-records-heading h2{font-size:17px;margin:0}
+/* Responsive application table rules must not shrink document tables. */
+.quick-sale-receipt.sale-invoice-sheet .receipt-items{display:table!important;width:100%!important;max-width:100%!important;min-width:0!important;table-layout:fixed;overflow:visible!important;margin:0;border-collapse:collapse}
+.sale-invoice-sheet .receipt-items thead{display:table-header-group}.sale-invoice-sheet .receipt-items tbody{display:table-row-group}.sale-invoice-sheet .receipt-items tfoot{display:table-footer-group}.sale-invoice-sheet .receipt-items tr{display:table-row}
+.quick-sale-receipt.sale-invoice-sheet .receipt-items :is(th,td){display:table-cell;box-sizing:border-box;overflow-wrap:anywhere}.quick-sale-receipt.sale-invoice-sheet .receipt-items :is(th,td):nth-child(2){white-space:normal}
+.quick-sale-receipt.sale-invoice-sheet h2{display:block;width:100%;box-sizing:border-box;text-align:center;line-height:1.4;padding:9px 12px}
+@media print{body.printing-preview .salary-doc,body:has(.print-preview-overlay) .salary-doc{min-height:0!important}.salary-doc .salary-footer{margin-top:0!important}.salary-doc .salary-footer>div{min-height:64px!important}.salary-doc .salary-footer h3{margin:0 0 12px!important}}
+
+.dashboard-expense-legend{max-height:280px;overflow-y:auto}.dashboard-expense-legend>div:focus-visible{outline:2px solid #f59e0b;outline-offset:2px;border-radius:5px}
+
+/* Preserve document table layout in A4 export, including nested salary tables. */
+@media print{
+  .print-preview-shell .salary-doc table{display:table!important;width:100%!important;min-width:0!important;max-width:100%!important;overflow:visible!important;border-collapse:collapse}
+  .print-preview-shell .salary-doc thead{display:table-header-group!important}.print-preview-shell .salary-doc tbody{display:table-row-group!important}.print-preview-shell .salary-doc tfoot{display:table-footer-group!important}.print-preview-shell .salary-doc tr{display:table-row!important;break-inside:avoid}.print-preview-shell .salary-doc :is(th,td){display:table-cell!important}
+  .print-preview-shell .salary-doc .salary-breakup{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;align-items:stretch}.print-preview-shell .salary-doc .salary-breakup>table{height:100%}
+  .print-preview-shell .salary-doc .doc-parties{display:grid!important;grid-template-columns:1fr 1fr!important}.print-preview-shell .salary-doc .salary-meta{display:grid!important;grid-template-columns:.8fr 1.3fr .9fr .9fr .9fr .8fr!important}
+  .print-preview-shell .salary-doc .doc-totals{display:grid!important;grid-template-columns:1.4fr .8fr!important}.print-preview-shell .salary-doc .salary-footer{display:grid!important;grid-template-columns:1fr 1fr!important;break-inside:avoid}
+}
