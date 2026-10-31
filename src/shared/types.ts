@@ -23,4 +23,4 @@ export type StockSale=ProductDetails&{colour?:string;fulfilment?:'reserved'|'del
 export type SchoolBarcode={id:string;barcode:string;school:string;year:string;shortTime:string;size:string;garmentType:string;gender:string;generatedDate:string};
 export type AttendanceStatus='Present'|'Absent'|'Half Day'|'Leave'|'Holiday';
 export type AttendanceEntry={id:string;date:string;employeeId:string;status:AttendanceStatus;remarks?:string};
-export type GarmentPrice={id:string;quality:string;garmentType:string;size:string;price:number;remarks?:string};
+export type GarmentPrice={gender?:string;status?:'Active'|'Inactive';id:string;quality:string;garmentType:string;size:string;price:number;remarks?:string};

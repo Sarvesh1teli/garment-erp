@@ -1,3 +1,4 @@
+import { appVersion } from './shared/appVersion';
 import { GeneralProduction } from './shared/GeneralProduction';
 import { CommerceProvider } from './shared/CommerceContext';
 import type { BusinessMode } from './shared/commerce';
@@ -24,7 +25,7 @@ import { Placeholder } from './shared/ui';
 import { useStoredState } from './shared/utils';
 import { GarmentTypesProvider } from './shared/GarmentTypes';
 
-const nav = [['Dashboard',LayoutDashboard],['School Orders',Network],['SMS Gateway',MessageSquare],['Customers & Schools',Users],['Measurements',ClipboardList],['Production',Scissors],['Staff Management',UserCog],['Work Assignment',ListChecks],['Work Calculation / Salary',Calculator],['Attendance',CalendarCheck],['Inventory',Boxes],['Billing & Payments',ReceiptText],['Expenses',WalletCards],['Delivery',Truck],['Reports',BarChart3],['Settings',Settings]] as const;
+const nav = [['Dashboard',LayoutDashboard],['School Orders',Network],['SMS Gateway',MessageSquare],['Customers & Schools',Users],['Measurements',ClipboardList],['Production',Scissors],['Inventory',Boxes],['Billing & Payments',ReceiptText],['Expenses',WalletCards],['Delivery',Truck],['Work Calculation / Salary',Calculator],['Attendance',CalendarCheck],['Work Assignment',ListChecks],['Staff Management',UserCog],['Reports',BarChart3],['Master',Settings],['Settings',Settings]] as const;
 const moduleLabels=nav.map(([label])=>label);
 
 type AppProps = {
@@ -74,9 +75,10 @@ function AppWorkspace({ currentUser, onLogout }: AppProps) {
     if (!visibleNav.some(([label]) => label === page)) setPage('Dashboard');
   }, [page, visibleNav]);
 
-  const displayName = currentUser?.name || (currentUser?.email ? currentUser.email.split('@')[0] : 'Rahul Teli');
-  const displayEmail = currentUser?.email || 'rahul@teliappareals.com';
-  const initials = displayName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'RT';
+  const rawName=currentUser?.name?.trim()||currentUser?.email?.split('@')[0]||'Admin';
+  const displayName=/^admin\s*admin$/i.test(rawName)?'Admin':rawName;
+  const profileDetail=currentUser?.email?.includes('@')?currentUser.email:currentUser?.role||currentUser?.email||'Admin';
+  const initials=displayName.split(/\s+/).map(name=>name[0]).join('').slice(0,2).toUpperCase()||'A';
 
   return (
     <div className="app">
@@ -126,22 +128,14 @@ function AppWorkspace({ currentUser, onLogout }: AppProps) {
           ))}
         </nav>
 
-        <div className="profile" style={{ flexShrink: 0, padding: '12px 14px', borderTop: '1px solid rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(0,0,0,0.15)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, overflow: 'hidden' }}>
-            <div className="avatar" style={{ background: '#2455A6', color: '#fff', fontWeight: 700, borderRadius: '50%', width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0 }}>
-              {initials}
-            </div>
-            <div style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-              <strong style={{ display: 'block', fontSize: 13, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayName}</strong>
-              <span style={{ fontSize: 11, color: '#DCE5F0', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayEmail}</span>
-            </div>
+        <div className="profile compact-sidebar-profile">
+          <div className="avatar">{initials}</div>
+          <div className="sidebar-profile-details">
+            <small className="sidebar-profile-version">Version {appVersion}</small>
+            <strong title={displayName}>{displayName}</strong>
+            <span title={profileDetail}>{profileDetail}</span>
           </div>
-
-          {onLogout && (
-            <button onClick={onLogout} title="Log Out" style={{ background: 'none', border: 'none', color: '#fda4af', cursor: 'pointer', padding: 6, borderRadius: 6, display: 'flex', alignItems: 'center' }}>
-              <LogOut size={18} />
-            </button>
-          )}
+          {onLogout&&<button type="button" onClick={onLogout} title="Log Out" aria-label="Log Out"><LogOut size={17}/></button>}
         </div>
       </aside>
 
@@ -155,7 +149,7 @@ function AppWorkspace({ currentUser, onLogout }: AppProps) {
           page === 'Production' ? <div className="production-workspace"><div className="content production-workspace-menu" style={{paddingBottom:0}}><div className="measurement-tabs wage-tabs"><button className={productionView==='general'?'active':''} onClick={()=>setProductionView('general')}>General / Customer Production</button>{businessMode!=='shop'&&<button className={productionView==='school'?'active':''} onClick={()=>setProductionView('school')}>School Production</button>}</div></div>{productionView==='general'?<GeneralProduction customers={customers} onInventory={()=>handleNavigate('Inventory')} />:<CustomersSchools productionMode company={companySettings} customers={customers} setCustomers={setCustomers} schools={schools} setSchools={setSchools} students={students} garmentPrices={garmentPrices} onNavigate={handleNavigate} navParams={navParams} />}</div> :
           page === 'Staff Management' ? <StaffManagement employees={employeeRecords} setEmployees={setEmployeeRecords} workTypes={workTypes} advances={advances} activeTab={staffTab} onTabChange={setStaffTab} /> :
           page === 'Work Assignment' ? <AssignmentsPage employees={employeeRecords} workTypes={workTypes} customers={customers} assignments={assignments} setAssignments={setAssignments} /> :
-          page === 'Work Calculation / Salary' ? <WagePage employees={employeeRecords} workTypes={workTypes} setWorkTypes={setWorkTypes} advances={advances} setAdvances={setAdvances} workEntries={workEntries} setWorkEntries={setWorkEntries} workTypeHistory={workTypeHistory} setWorkTypeHistory={setWorkTypeHistory} salaryHistory={salaryHistory} setSalaryHistory={setSalaryHistory} attendance={attendance} company={companySettings} garmentPrices={garmentPrices} setGarmentPrices={setGarmentPrices} /> :
+          (page === 'Work Calculation / Salary'||page === 'Master') ? <WagePage key={page} mastersOnly={page==='Master'} employees={employeeRecords} workTypes={workTypes} setWorkTypes={setWorkTypes} advances={advances} setAdvances={setAdvances} workEntries={workEntries} setWorkEntries={setWorkEntries} workTypeHistory={workTypeHistory} setWorkTypeHistory={setWorkTypeHistory} salaryHistory={salaryHistory} setSalaryHistory={setSalaryHistory} attendance={attendance} company={companySettings} garmentPrices={garmentPrices} setGarmentPrices={setGarmentPrices} /> :
           page === 'Attendance' ? <AttendancePage employees={employeeRecords} attendance={attendance} setAttendance={setAttendance} company={companySettings} /> :
           page === 'Inventory' ? <InventoryPage company={companySettings} customers={customers} schools={schools} navParams={navParams} onNavigate={handleNavigate} /> :
           page === 'Billing & Payments' ? <BillingPaymentsPage businessMode={businessMode} company={companySettings} customers={customers} schools={schools} students={students} navParams={navParams} onNavigate={handleNavigate} /> :

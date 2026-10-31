@@ -1,8 +1,8 @@
+import { appVersion, packageVersion, buildDate } from '../../shared/appVersion';
 import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import { Building2, Boxes, Cloud, CreditCard, DatabaseBackup, Download, Link2, RotateCcw, Save, Settings, ShieldCheck, Unlink, Upload, Clock, FileText, Info, Eye, EyeOff, Copy, Check, X } from 'lucide-react';
 import { activateSubscription, connectGoogleDrive, createBackup, disconnectGoogleDrive, downloadBackup, downloadGoogleDriveBackup, getGoogleDriveBackupStatus, getSubscription, importBackup, listBackups, listGoogleDriveBackups, restoreBackup, restoreGoogleDriveBackup, runGoogleDriveBackup, runLocalBackup, saveGoogleDriveOAuth, saveGoogleDriveSchedule, type BackupManifest, type GoogleDriveBackupFile, type GoogleDriveBackupStatus, type SubscriptionInfo } from '../../shared/api';
 import { SaaSOnboardingModal } from '../saas/SaaSOnboardingModal';
-import { GarmentTypesMaster } from '../../shared/GarmentTypes';
 import { useStoredState } from '../../shared/utils';
 import type { BusinessMode } from '../../shared/commerce';
 
@@ -51,7 +51,7 @@ const formatBackupDate = (dateVal: string | null | undefined) => {
 
 export function SettingsPage({ company, setCompany, modules, setModules, moduleLabels }: SettingsPageProps) {
   const [businessMode,setBusinessMode]=useStoredState<BusinessMode>('garment-business-mode','both');
-  const [tab, setTab] = useState<'garment' | 'types' | 'modules' | 'backup' | 'subscription'>('garment');
+  const [tab, setTab] = useState<'garment' | 'modules' | 'backup' | 'subscription' | 'about'>('garment');
   const [backupSubTab, setBackupSubTab] = useState<'automatic' | 'manual'>('automatic');
   const [showOAuthModal, setShowOAuthModal] = useState(false);
   const [oauthClientId, setOauthClientId] = useState('');
@@ -366,7 +366,6 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
           <Building2 size={16} />
           <span>Garment Details<small>receipt information</small></span>
         </button>
-        <button className={tab === 'types' ? 'active' : ''} onClick={() => setTab('types')}><Boxes size={16}/><span>Garment Types<small>central master</small></span></button>
         <button className={tab === 'modules' ? 'active' : ''} onClick={() => setTab('modules')}>
           <Boxes size={16} />
           <span>Modules<small>{enabledCount} visible menus</small></span>
@@ -379,9 +378,10 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
           <CreditCard size={16} />
           <span>Subscription<small>{subscription?.status||'desktop license'}</small></span>
         </button>
+        <button className={tab==='about'?'active':''} onClick={()=>setTab('about')}><Info size={16}/><span>About<small>Version {appVersion}</small></span></button>
       </div>
 
-      {tab==='types'&&<GarmentTypesMaster/>}
+      {tab==='about'&&<article className="card settings-panel app-about"><h2>About ThreadFlow</h2><p>Garment ERP</p><dl><dt>Version</dt><dd>{appVersion}</dd><dt>Build date</dt><dd>{buildDate}</dd><dt>Internal version</dt><dd>{packageVersion}</dd></dl><h3>Release notes — {appVersion}</h3><ul><li>Business connection recovery through Reset Connection.</li><li>Salary and work breakdown PDF layout corrections.</li><li>Inventory product details and billing improvements.</li></ul></article>}
       {tab === 'garment' && (
         <article className="card settings-panel">
           <div className="cardhead">

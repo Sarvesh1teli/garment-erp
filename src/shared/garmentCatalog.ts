@@ -1,4 +1,4 @@
-export type GarmentType={name:string;gender:'All'|'Boys'|'Girls';active:boolean};
+export type GarmentType={name:string;gender:'All'|'Boys'|'Girls'|'Common';active:boolean;sizes?:string[]};
 export const garmentIdentity=(name:string)=>name.trim().replace(/\s+/g,' ').toLowerCase();
 export const defaultGarmentNames=['Shirt','Half Pant','Full Pant','Pant','Blouse','Skirt','Track Suit','Track Pant','Jacket','Suit Pant'];
 export const garmentNamesForGender=(records:GarmentType[],gender:string)=>records.filter(row=>row.active&&(!gender||row.gender==='All'||row.gender===gender)).map(row=>row.name);
@@ -13,3 +13,5 @@ export function collectGarmentNames(value:unknown):string[]{
   const row=value as Record<string,unknown>;
   return [...(['garment','garmentType'].flatMap(key=>typeof row[key]==='string'&&!(key==='garment'&&Array.isArray(row.items)&&row.items.length)?[row[key] as string]:[])),...(row.sizes&&typeof row.sizes==='object'?Object.keys(row.sizes):[]),...Object.values(row).filter(v=>v&&typeof v==='object').flatMap(collectGarmentNames)];
 }
+
+export const parseGarmentSizes=(value:string)=>Array.from(new Set(value.split(/[,;\n]+/).map(size=>size.trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));

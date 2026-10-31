@@ -1,3 +1,6 @@
+import { SchoolOrderHistoryView } from '../../shared/SchoolOrderHistoryView';
+import { schoolDeliveryItems } from '../../shared/schoolDelivery';
+import { readyBalances } from '../../shared/commerce';
 import { schoolCashReceipts } from '../../shared/paymentReceipts';
 import type { BusinessMode } from '../../shared/commerce';
 import type { BulkOrder } from '../../shared/bulkOrders';
@@ -537,20 +540,20 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
     setSelectedRowKeys(new Set());
   };
 
-  const getGarmentMasterPrice = (garmentName: string, sizeName: string): number => {
+  const getGarmentMasterPrice = (garmentName: string, sizeName: string,gender='Common'): number => {
     if (!garmentPrices || !garmentPrices.length) return 0;
     const gNorm = garmentName.trim().toLowerCase();
     const sNorm = sizeName.trim().toLowerCase();
 
     // 1. Exact match on garment type & size
-    const exact = garmentPrices.find(p =>
+    const exact = garmentPrices.filter(p=>p.status!=='Inactive'&&(!p.gender||p.gender==='Common'||p.gender===gender)).sort((a,b)=>Number(b.gender===gender)-Number(a.gender===gender)).find(p =>
       p.garmentType.trim().toLowerCase() === gNorm &&
       p.size.trim().toLowerCase() === sNorm
     );
     if (exact && exact.price > 0) return exact.price;
 
     // 2. Substring match on garment type & exact size
-    const partial = garmentPrices.find(p => {
+    const partial = garmentPrices.filter(p=>p.status!=='Inactive'&&(!p.gender||p.gender==='Common'||p.gender===gender)).sort((a,b)=>Number(b.gender===gender)-Number(a.gender===gender)).find(p => {
       const pType = p.garmentType.trim().toLowerCase();
       return (gNorm.includes(pType) || pType.includes(gNorm)) &&
         p.size.trim().toLowerCase() === sNorm;
@@ -558,7 +561,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
     if (partial && partial.price > 0) return partial.price;
 
     // 3. Match garment type alone fallback
-    const garmentOnly = garmentPrices.find(p => {
+    const garmentOnly = garmentPrices.filter(p=>p.status!=='Inactive'&&(!p.gender||p.gender==='Common'||p.gender===gender)).sort((a,b)=>Number(b.gender===gender)-Number(a.gender===gender)).find(p => {
       const pType = p.garmentType.trim().toLowerCase();
       return gNorm === pType || gNorm.includes(pType) || pType.includes(gNorm);
     });
@@ -568,7 +571,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
   };
 
   const openDeliverAllReadyStockModal=()=>{
-    if(commerce&&onNavigate&&viewSchool){const deliveryItems=productSummary.filter(r=>r.ready>0).map(r=>({garment:r.garment,size:r.size,gender:r.gender,quantity:r.ready,rate:getGarmentMasterPrice(r.garment,r.size)}));if(!deliveryItems.length){setToast('No ready stock available to deliver.');return;}onNavigate('Billing & Payments',{tab:'quick',school:viewSchool.name,deliveryItems,fromSchool:viewSchool.name,fromPage:productionMode?'Production':'Customers & Schools'});return;}
+    if(commerce&&onNavigate&&viewSchool){const deliveryItems=schoolDeliveryItems(productSummary,readyBalances(commerce.schoolStock,commerce.customerStock,commerce.sales),viewSchool.name,getGarmentMasterPrice);if(!deliveryItems.length){setToast('No ready stock available to deliver.');return;}onNavigate('Billing & Payments',{tab:'quick',school:viewSchool.name,deliveryItems,fromSchool:viewSchool.name,fromPage:productionMode?'Production':'Customers & Schools'});return;}
     if(!viewSchool)return;
     const readyStockRows = productSummary.filter(r => r.ready > 0);
     if (!readyStockRows.length) {
@@ -581,9 +584,9 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
     const initialData: Record<string, { deliverQty: number; rate: number }> = {};
     readyStockRows.forEach(r => {
       const k = `${r.year}||${r.gender}||${r.garment}||${r.size}`;
-      const autoRate = getGarmentMasterPrice(r.garment, r.size);
+      const autoRate = getGarmentMasterPrice(r.garment, r.size,r.gender);
       initialData[k] = {
-        deliverQty: r.ready,
+        deliverQty: Math.min(r.ready, r.pendingDel),
         rate: autoRate
       };
     });
@@ -598,13 +601,13 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
   };
 
   const openMultiDeliverStockModal=(deliveryRows=selectedRowsList)=>{
-    if(commerce&&onNavigate&&viewSchool){const deliveryItems=deliveryRows.map(r=>({garment:r.garment,size:r.size,gender:r.gender,quantity:r.ready,rate:getGarmentMasterPrice(r.garment,r.size)}));if(!deliveryItems.length){setToast('No ready stock available to deliver.');return;}onNavigate('Billing & Payments',{tab:'quick',school:viewSchool.name,deliveryItems,fromSchool:viewSchool.name,fromPage:productionMode?'Production':'Customers & Schools'});return;}
+    if(commerce&&onNavigate&&viewSchool){const deliveryItems=schoolDeliveryItems(deliveryRows,readyBalances(commerce.schoolStock,commerce.customerStock,commerce.sales),viewSchool.name,getGarmentMasterPrice);if(!deliveryItems.length){setToast('No ready stock available to deliver.');return;}onNavigate('Billing & Payments',{tab:'quick',school:viewSchool.name,deliveryItems,fromSchool:viewSchool.name,fromPage:productionMode?'Production':'Customers & Schools'});return;}
     if(!selectedRowsList.length)return;
     const initialData:Record<string,{deliverQty:number;rate:number}>={};
     selectedRowsList.forEach(r=>{
       const k=`${r.year}||${r.gender}||${r.garment}||${r.size}`;
-      const deliverable=Math.max(0,Math.min(r.ready,r.pendingDel>0?r.pendingDel:r.ready));
-      const autoRate = getGarmentMasterPrice(r.garment, r.size);
+      const deliverable=Math.max(0,Math.min(r.ready,r.pendingDel));
+      const autoRate = getGarmentMasterPrice(r.garment, r.size,r.gender);
       initialData[k]={
         deliverQty:deliverable,
         rate:autoRate
@@ -1064,18 +1067,6 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
                   <div
                     className="metric"
                     style={{padding:'6px 10px',gap:8,minHeight:48,alignItems:'center',cursor:'pointer',userSelect:'none',transition:'transform 0.1s, box-shadow 0.1s'}}
-                    title="Click to view all enrolled students and measurements"
-                    onClick={()=>{setActiveMetricModal('students');setMetricModalSearch('')}}
-                  >
-                    <div className="metricicon green" style={{width:28,height:28,borderRadius:6}}><ClipboardList size={14}/></div>
-                    <div>
-                      <span style={{fontSize:10}}>Students ↗</span>
-                      <strong style={{fontSize:15,margin:0}}>{students?.filter(s=>s.school===viewSchool.name).length||0}</strong>
-                    </div>
-                  </div>
-                  <div
-                    className="metric"
-                    style={{padding:'6px 10px',gap:8,minHeight:48,alignItems:'center',cursor:'pointer',userSelect:'none',transition:'transform 0.1s, box-shadow 0.1s'}}
                     title={`Total Order: ${totalRequired} Pcs · Total Stitched: ${totalStitched} Pcs. Click to view order requirement breakdown`}
                     onClick={()=>{setActiveMetricModal('required');setMetricModalSearch('')}}
                   >
@@ -1181,21 +1172,23 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
               );
             })()}
 
+            <SchoolOrderHistoryView key={viewSchool.name} school={viewSchool.name} orders={bulkOrders} students={students||[]} sales={schoolSales} year={summaryFilterYear} gender={summaryFilterGender} garment={summaryFilterGarment} size={summaryFilterSize}/>
+
             <div className="school-prod-summary-section" style={{marginTop:10,marginBottom:16}}>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10,margin:'0 0 8px'}}>
                 <h3 style={{font:'700 15px Manrope',color:'#123d35',display:'flex',alignItems:'center',gap:8,margin:0}}><Scissors size={16}/> Product Summary — Ready, Pending & Delivery Details</h3>
                 <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
                   {(() => {
-                    const totalReadyAvail = productSummary.reduce((a, b) => a + b.ready, 0);
+                    const totalReadyAvail = productSummary.reduce((a, b) => a + Math.min(b.ready, b.pendingDel), 0);
                     return totalReadyAvail > 0 ? (
                       <button
                         type="button"
                         className="primary"
                         style={{ background: '#0284c7', borderColor: '#0284c7', fontSize: 12, padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700 }}
                         onClick={openDeliverAllReadyStockModal}
-                        title="Deliver all completed ready garments across all classes/sizes in one single invoice"
+                        title="Deliver the remaining ordered quantities, limited to available stock"
                       >
-                        <Truck size={14} /> Deliver All Ready Stock ({totalReadyAvail} Pcs)
+                        <Truck size={14} /> Deliver Pending Order ({totalReadyAvail} Pcs)
                       </button>
                     ) : null;
                   })()}
@@ -1774,7 +1767,7 @@ export function CustomersSchools({customers,setCustomers,schools,setSchools,stud
                     selectedRowsList.forEach(r => {
                       const k = `${r.year}||${r.gender}||${r.garment}||${r.size}`;
                       const cur = multiDeliverItems[k] || { rate: 0, deliverQty: 0 };
-                      const autoRate = getGarmentMasterPrice(r.garment, r.size);
+                      const autoRate = getGarmentMasterPrice(r.garment, r.size,r.gender);
                       updated[k] = {
                         deliverQty: cur.deliverQty,
                         rate: autoRate > 0 ? autoRate : cur.rate

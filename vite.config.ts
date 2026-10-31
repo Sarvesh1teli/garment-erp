@@ -10,6 +10,7 @@ const useHttps = process.env.VITE_HTTPS === 'true' && fs.existsSync(keyPath) && 
 
 export default defineConfig({
   plugins: [react()],
+  define: { __APP_BUILD_DATE__: JSON.stringify(new Date().toLocaleDateString('en-GB',{timeZone:'Asia/Kolkata'}).replaceAll('/','-')) },
   base: './',
   server: {
     host: '0.0.0.0',

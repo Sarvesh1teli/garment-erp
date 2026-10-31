@@ -1,5 +1,5 @@
 import { SalarySmsAction } from '../../shared/GarmentReceiptSmsActions';
-import { useGarmentTypes } from '../../shared/GarmentTypes';
+import { GarmentTypesMaster, useGarmentTypes } from '../../shared/GarmentTypes';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, BarChart3, Calculator, CheckCircle2, ClipboardList, Eye, IndianRupee, Pencil, Plus, Printer, ReceiptText, RotateCcw, Save, Search, Settings, Tag, Trash2, WalletCards } from 'lucide-react';
 import type React from 'react';
@@ -10,25 +10,26 @@ import { defaultGarmentPrices, defaultWorkTypes } from '../../shared/defaults';
 import { CompanyPrintHeader, PrintPreview, SalaryPrintFooter, SalaryPrintHeader, Stats, Table } from '../../shared/ui';
 import { inRange, money, useStoredState, workTypeCode } from '../../shared/utils';
 
-export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,workEntries,setWorkEntries,workTypeHistory,setWorkTypeHistory,salaryHistory,setSalaryHistory,attendance,company,garmentPrices:propGarmentPrices,setGarmentPrices:propSetGarmentPrices}:{employees:Employee[];workTypes:WorkType[];setWorkTypes:React.Dispatch<React.SetStateAction<WorkType[]>>;advances:AdvanceEntry[];setAdvances:React.Dispatch<React.SetStateAction<AdvanceEntry[]>>;workEntries:WorkEntry[];setWorkEntries:React.Dispatch<React.SetStateAction<WorkEntry[]>>;workTypeHistory:string[][];setWorkTypeHistory:React.Dispatch<React.SetStateAction<string[][]>>;salaryHistory:SalaryPayment[];setSalaryHistory:React.Dispatch<React.SetStateAction<SalaryPayment[]>>;attendance?:AttendanceEntry[];company:CompanySettings;garmentPrices?:GarmentPrice[];setGarmentPrices?:React.Dispatch<React.SetStateAction<GarmentPrice[]>>}){
+export function WagePage({mastersOnly=false,employees,workTypes,setWorkTypes,advances,setAdvances,workEntries,setWorkEntries,workTypeHistory,setWorkTypeHistory,salaryHistory,setSalaryHistory,attendance,company,garmentPrices:propGarmentPrices,setGarmentPrices:propSetGarmentPrices}:{mastersOnly?:boolean;employees:Employee[];workTypes:WorkType[];setWorkTypes:React.Dispatch<React.SetStateAction<WorkType[]>>;advances:AdvanceEntry[];setAdvances:React.Dispatch<React.SetStateAction<AdvanceEntry[]>>;workEntries:WorkEntry[];setWorkEntries:React.Dispatch<React.SetStateAction<WorkEntry[]>>;workTypeHistory:string[][];setWorkTypeHistory:React.Dispatch<React.SetStateAction<string[][]>>;salaryHistory:SalaryPayment[];setSalaryHistory:React.Dispatch<React.SetStateAction<SalaryPayment[]>>;attendance?:AttendanceEntry[];company:CompanySettings;garmentPrices?:GarmentPrice[];setGarmentPrices?:React.Dispatch<React.SetStateAction<GarmentPrice[]>>}){
   const [from,setFrom]=useState(()=>{const now=new Date();return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`});
   const [to,setTo]=useState(()=>new Date().toISOString().slice(0,10));
   const [employeeId,setEmployeeId]=useState('');
   const [recover,setRecover]=useState(0);
   const [roundOffAdjustment,setRoundOffAdjustment]=useState(0);
   const [mode,setMode]=useState<'Cash'|'UPI'|'Bank'>('Cash');
-  const [wageTab,setWageTab]=useState<'work'|'advance'|'salary'|'history'|'masters'|'reports'>('work');
-  const [masterSubTab,setMasterSubTab]=useState<'work-type'|'rate-history'|'garment-price'>('work-type');
+  const [wageTab,setWageTab]=useState<'work'|'advance'|'salary'|'history'|'masters'|'reports'>(mastersOnly?'masters':'work');
+  const [masterSubTab,setMasterSubTab]=useState<'work-type'|'rate-history'|'garment-price'|'garment-types'>('work-type');
   const [storedGarmentPrices,setStoredGarmentPrices]=useStoredState<GarmentPrice[]>('garment-prices',defaultGarmentPrices);
   const garmentPrices=propGarmentPrices??storedGarmentPrices;
   const setGarmentPrices=propSetGarmentPrices??setStoredGarmentPrices;
   const [garmentPricePage,setGarmentPricePage]=useState(1);
   const [garmentPricePageSize,setGarmentPricePageSize]=useState(10);
   const [garmentPriceSearch,setGarmentPriceSearch]=useState('');
+  const [priceGender,setPriceGender]=useState('All'),[priceSize,setPriceSize]=useState('All');
   const [garmentPriceFilterGarment,setGarmentPriceFilterGarment]=useState('All');
   const [garmentPriceFilterQuality,setGarmentPriceFilterQuality]=useState('All');
   const catalog=useGarmentTypes();
-  const [newGarmentPrice,setNewGarmentPrice]=useState<Omit<GarmentPrice,'id'>>({quality:'Standard',garmentType:'Shirt',size:'28',price:0,remarks:''});
+  const [newGarmentPrice,setNewGarmentPrice]=useState<Omit<GarmentPrice,'id'>>({gender:'Common',status:'Active',quality:'Standard',garmentType:'Shirt',size:'28',price:0,remarks:''});
   const [editingPriceId,setEditingPriceId]=useState<string|null>(null);
   const [editGarmentPriceDraft,setEditGarmentPriceDraft]=useState<GarmentPrice|null>(null);
   const [garmentPriceSuccess,setGarmentPriceSuccess]=useState('');
@@ -185,6 +186,8 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
 
   const filteredGarmentPrices = useMemo(() => {
     return garmentPrices.filter(p => {
+      if(priceGender!=='All'&&(p.gender||'Common')!==priceGender)return false;
+      if(priceSize!=='All'&&p.size!==priceSize)return false;
       if (garmentPriceFilterGarment !== 'All' && p.garmentType !== garmentPriceFilterGarment) return false;
       if (garmentPriceFilterQuality !== 'All' && p.quality !== garmentPriceFilterQuality) return false;
       if (garmentPriceSearch.trim()) {
@@ -198,7 +201,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
       }
       return true;
     });
-  }, [garmentPrices, garmentPriceFilterGarment, garmentPriceFilterQuality, garmentPriceSearch]);
+  }, [garmentPrices, garmentPriceFilterGarment, garmentPriceFilterQuality, garmentPriceSearch,priceGender,priceSize]);
 
   const garmentPricePageCount = Math.max(1, Math.ceil(filteredGarmentPrices.length / garmentPricePageSize));
   const safeGarmentPricePage = Math.min(Math.max(1, garmentPricePage), garmentPricePageCount);
@@ -219,7 +222,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
     }
     const id = `GP-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
     const created: GarmentPrice = {
-      id,
+      id,gender:newGarmentPrice.gender||'Common',status:'Active',
       quality: newGarmentPrice.quality.trim() || 'Standard',
       garmentType: newGarmentPrice.garmentType.trim(),
       size: newGarmentPrice.size.trim(),
@@ -497,7 +500,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
   const editWorkType=editForm?workTypes.find(wt=>wt.id===editForm.workTypeId)||editEntry?.workType:null;
   const editAmount=editForm&&editWorkType?Number(editForm.quantity||0)*editWorkType.rate:0;
   return <section className="content wage-workspace">
-    <div className="segmented-pill-tabs wage-main-tabs">
+    {!mastersOnly&&<div className="segmented-pill-tabs wage-main-tabs">
       <button
         type="button"
         className={`pill-tab-btn ${wageTab==='work'?'active':''}`}
@@ -533,21 +536,13 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
       </button>
       <button
         type="button"
-        className={`pill-tab-btn ${wageTab==='masters'?'active':''}`}
-        onClick={()=>setWageTab('masters')}
-      >
-        <Settings size={16}/>
-        <span>MASTERS</span>
-      </button>
-      <button
-        type="button"
         className={`pill-tab-btn ${wageTab==='reports'?'active':''}`}
         onClick={()=>setWageTab('reports')}
       >
         <BarChart3 size={16}/>
         <span>REPORTS</span>
       </button>
-    </div>
+    </div>}
     {lastGeneratedSalary&&<div className="salary-success" style={{display:'flex',flexWrap:'wrap',gap:10,alignItems:'center'}}><span>Salary slip {lastGeneratedSalary.id} generated — {money(lastGeneratedSalary.netPayable)}.</span><SalarySmsAction payment={lastGeneratedSalary} name={employees.find(e=>e.id===lastGeneratedSalary.employeeId)?.name||lastGeneratedSalary.employeeId} phone={employees.find(e=>e.id===lastGeneratedSalary.employeeId)?.mobile} companyName={company.name}/><button type="button" className="outline" onClick={()=>setViewHistory(lastGeneratedSalary)}>View / Print Slip</button><button type="button" className="outline" onClick={()=>setLastGeneratedSalary(null)}>Close</button></div>}
     {wageTab!=='masters'&&<div className="filterbar salary-filter compact-wage-filter"><label>Employee<select value={employeeId} onChange={e=>{const id=e.target.value;setEmployeeId(id);setWorkForm(f=>({...f,employeeId:id}));}}><option value="">All Staff / Select employee</option>{activeStaff.map(e=><option value={e.id} key={e.id}>{e.name}</option>)}</select></label><label>From<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label><label>To<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label>{wageTab==="salary"&&<>{salaryType==='Fixed Monthly'&&<><label>Leave / Absent Days<input type="number" min="0" style={{width:'90px'}} value={leaveDays} onChange={e=>setLeaveDays(Number(e.target.value))}/></label><label>Leave Deduction Option<select value={leaveDeductionMode} onChange={e=>setLeaveDeductionMode(e.target.value as LeaveDeductionMode)}><option value="None">No Deduction (Full Pay)</option><option value="Auto">Automatic (Sal / 30 per day)</option><option value="Manual">Manual Deduction Entry</option></select></label>{leaveDeductionMode==='Manual'&&<label>Deduct Amount (Rs.)<input type="number" min="0" style={{width:'110px'}} value={manualDeduction} onChange={e=>setManualDeduction(Number(e.target.value))}/></label>}</>}<label>Recover this month<input type="number" min="0" value={recover} onChange={e=>setRecover(Number(e.target.value))}/></label><label>Round Off (Rs.)<input type="number" min="0" step="0.01" value={roundOffAdjustment} onChange={e=>setRoundOffAdjustment(Math.max(0,Number(e.target.value)||0))}/></label><label>Payment mode<select value={mode} onChange={e=>setMode(e.target.value as "Cash"|"UPI"|"Bank")}><option>Cash</option><option>UPI</option><option>Bank</option></select></label><div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}><button type="button" className="primary" style={{ margin: 0, whiteSpace: 'nowrap' }} onClick={()=>setShowWorkBreakdown(v=>!v)}><Calculator size={16}/> Calculate salary</button><button type="button" className={showSalaryPayment ? "primary" : "outline"} style={{ margin: 0, whiteSpace: 'nowrap' }} onClick={()=>setShowSalaryPayment(v=>!v)} title="Open / Hide Salary payment screen"><ReceiptText size={16}/> Salary payment screen</button></div></>}</div>}
     {wageTab==='work'&&<><div className="advance-grid">
@@ -590,10 +585,11 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
       )}</>}
     {wageTab==='history'&&<>{salaryDeleted&&<div className="salary-success"><CheckCircle2 size={16}/> Salary slip {salaryDeleted} deleted from Salary History.</div>}<Stats values={[[ 'Payments',String(salaryHistoryRows.length),employeeId ? 'for selected employee' : 'all employees'],[ 'Total Gross',money(filteredSalaryHistory.reduce((a,b)=>a+(b.gross||0),0)),'total work amount'],[ 'Total Net Paid',money(filteredSalaryHistory.reduce((a,b)=>a+(b.netPayable||0),0)),'after recovery'],[ 'Last Paid',filteredSalaryHistory[0]?.paidDate||'-','most recent' ]]}/><Table paged={true} title="Salary history" copy="Each payment snapshots its slip values and can be reprinted" headers={['SAL ID','EMPLOYEE','PAID DATE','PERIOD','SALARY TYPE','WORK DAYS','PIECES','GROSS','RECOVERED','NET PAYABLE','MODE']} rows={salaryHistoryRows} actions={r=>{const pay=salaryHistory.find(x=>x.id===r[0]);return pay?<div className="dropdown-action-cell"><button type="button" className="outline mini-action dropdown-trigger" onClick={e=>{e.stopPropagation();const rect=(e.currentTarget as HTMLElement).getBoundingClientRect();const pos={top:rect.bottom+4,left:Math.max(8,rect.right-160)};setHistoryDropdownPos(openHistoryAction===pay.id?null:pos);setOpenHistoryAction(openHistoryAction===pay.id?null:pay.id)}}>Actions <span className="dropdown-arrow"/></button>{openHistoryAction===pay.id&&historyDropdownPos&&<div className="dropdown-menu" style={{top:historyDropdownPos.top,left:historyDropdownPos.left}}><button type="button" className="dropdown-item" onClick={()=>{setOpenHistoryAction(null);setHistoryDropdownPos(null);setViewHistory(pay)}}><Printer size={14}/> Print Slip</button><button type="button" className="dropdown-item danger" onClick={()=>{setOpenHistoryAction(null);setHistoryDropdownPos(null);setDeleteTarget(pay);setMasterAuth({username:'',password:''});setMasterError('')}}><Trash2 size={14}/> Delete</button></div>}</div>:null}}/></>}
     {wageTab==='masters'&&<>
-      <div className="underline-tabs-nav wage-master-subtabs">
+      <div className="segmented-pill-tabs wage-master-subtabs">
+        <button type="button" className={masterSubTab==='garment-types'?'active':''} onClick={()=>setMasterSubTab('garment-types')}><Tag size={16}/><span>Garment Types</span><span className="subtab-count">({catalog.records.length})</span></button>
         <button
           type="button"
-          className={`underline-tab-btn ${masterSubTab==='work-type'?'active':''}`}
+          className={`${masterSubTab==='work-type'?'active':''}`}
           onClick={()=>setMasterSubTab('work-type')}
         >
           <Settings size={16}/>
@@ -602,16 +598,16 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
         </button>
         <button
           type="button"
-          className={`underline-tab-btn ${masterSubTab==='rate-history'?'active':''}`}
+          className={`${masterSubTab==='rate-history'?'active':''}`}
           onClick={()=>setMasterSubTab('rate-history')}
         >
           <ReceiptText size={16}/>
-          <span>Work Type Rate History</span>
+          <span>Work Type History</span>
           <span className="subtab-count">({workTypeHistory.length})</span>
         </button>
         <button
           type="button"
-          className={`underline-tab-btn ${masterSubTab==='garment-price'?'active':''}`}
+          className={`${masterSubTab==='garment-price'?'active':''}`}
           onClick={()=>setMasterSubTab('garment-price')}
         >
           <Tag size={16}/>
@@ -620,6 +616,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
         </button>
       </div>
 
+      {masterSubTab==='garment-types'&&<GarmentTypesMaster/>}
       {masterSubTab==='work-type'&&(
         <article className="card salary-panel module-table work-type-master-panel">
           <div className="cardhead">
@@ -792,7 +789,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
 
           {/* Filters */}
           <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap',marginBottom:14,background:'#f8fafc',padding:'10px 12px',borderRadius:8,border:'1px solid #e2e8f0'}}>
-            <div style={{display:'flex',alignItems:'center',gap:6,flex:1,minWidth:200}}>
+            <div style={{display:'flex',alignItems:'center',gap:6,flex:'0 1 240px',minWidth:170}}>
               <Search size={14} color="#64748b"/>
               <input
                 type="text"
@@ -824,12 +821,14 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
                 {Array.from(new Set(garmentPrices.map(p=>p.quality))).sort().map(q=><option key={q} value={q}>{q}</option>)}
               </select>
             </label>
-            {(garmentPriceSearch || garmentPriceFilterGarment!=='All' || garmentPriceFilterQuality!=='All') && (
+            <label className="price-filter">Gender<select value={priceGender} onChange={e=>{setPriceGender(e.target.value);setGarmentPricePage(1);}}><option value="All">All Genders</option><option>Boys</option><option>Girls</option><option>Common</option></select></label>
+            <label className="price-filter">Size<select value={priceSize} onChange={e=>{setPriceSize(e.target.value);setGarmentPricePage(1);}}><option value="All">All Sizes</option>{Array.from(new Set(garmentPrices.filter(p=>garmentPriceFilterGarment==='All'||p.garmentType===garmentPriceFilterGarment).map(p=>p.size))).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true})).map(size=><option key={size}>{size}</option>)}</select></label>
+            {(garmentPriceSearch || garmentPriceFilterGarment!=='All' || garmentPriceFilterQuality!=='All'||priceGender!=='All'||priceSize!=='All') && (
               <button
                 type="button"
                 className="outline mini-action"
                 style={{fontSize:11,padding:'4px 8px'}}
-                onClick={()=>{setGarmentPriceSearch('');setGarmentPriceFilterGarment('All');setGarmentPriceFilterQuality('All');setGarmentPricePage(1);}}
+                onClick={()=>{setPriceGender('All');setPriceSize('All');setGarmentPriceSearch('');setGarmentPriceFilterGarment('All');setGarmentPriceFilterQuality('All');setGarmentPricePage(1);}}
               >
                 Reset
               </button>
@@ -841,7 +840,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
             <strong style={{display:'block',fontSize:13,color:'#166534',marginBottom:8}}>
               + Add Garment Price Entry
             </strong>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(130px, 1fr))',gap:10,alignItems:'end'}}>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(130px, 1fr))',gap:10,alignItems:'end'}}><label style={{fontSize:11,fontWeight:700,color:'#166534'}}>Gender<select value={newGarmentPrice.gender||'Common'} onChange={e=>setNewGarmentPrice({...newGarmentPrice,gender:e.target.value})}><option>Boys</option><option>Girls</option><option>Common</option></select></label>
               <label style={{fontSize:11,fontWeight:700,color:'#166534'}}>
                 Quality:
                 <input
@@ -883,7 +882,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
                   onChange={e=>setNewGarmentPrice({...newGarmentPrice,size:e.target.value})}
                   style={{display:'block',width:'100%',marginTop:4,padding:'6px 8px',border:'1px solid #86efac',borderRadius:6,fontSize:12}}
                 />
-                <datalist id="size-presets">
+                <datalist id="size-presets">{(catalog.records.find(row=>row.name===newGarmentPrice.garmentType)?.sizes||[]).map(size=><option key={size} value={size}/>)}
                   <option value="20"/><option value="22"/><option value="24"/><option value="26"/>
                   <option value="28"/><option value="30"/><option value="32"/><option value="34"/>
                   <option value="36"/><option value="38"/><option value="40"/><option value="42"/>
@@ -930,10 +929,10 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
             <thead>
               <tr>
                 <th>GARMENT TYPE</th>
-                <th>SIZE</th>
+                <th>GENDER</th><th>SIZE</th>
                 <th>QUALITY</th>
                 <th>PRICE / RATE (₹)</th>
-                <th>REMARKS</th>
+                <th>REMARKS</th><th>STATUS</th>
                 <th style={{width:130,textAlign:'center'}}>ACTIONS</th>
               </tr>
             </thead>
@@ -950,6 +949,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
                           style={{padding:'4px 6px',fontSize:12,width:'100%'}}
                         />
                       </td>
+                      <td><select value={editGarmentPriceDraft.gender||'Common'} onChange={e=>setEditGarmentPriceDraft({...editGarmentPriceDraft,gender:e.target.value})}><option>Boys</option><option>Girls</option><option>Common</option></select></td>
                       <td>
                         <input
                           value={editGarmentPriceDraft.size}
@@ -980,7 +980,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
                           style={{padding:'4px 6px',fontSize:12,width:'100%'}}
                         />
                       </td>
-                      <td style={{textAlign:'center'}}>
+                      <td>{editGarmentPriceDraft.status||'Active'}</td><td style={{textAlign:'center'}}>
                         <div style={{display:'flex',gap:4,justifyContent:'center'}}>
                           <button
                             type="button"
@@ -1007,11 +1007,11 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
                 return (
                   <tr key={item.id}>
                     <td><strong style={{color:'#007c68'}}>{item.garmentType}</strong></td>
-                    <td><span style={{fontWeight:700,background:'#e0f2fe',color:'#0369a1',padding:'2px 8px',borderRadius:4,fontSize:12}}>{item.size}</span></td>
+                    <td>{item.gender||'Common'}</td><td><span style={{fontWeight:700,background:'#e0f2fe',color:'#0369a1',padding:'2px 8px',borderRadius:4,fontSize:12}}>{item.size}</span></td>
                     <td><span style={{fontSize:12,color:'#334155'}}>{item.quality || 'Standard'}</span></td>
                     <td><strong style={{color:'#047857',fontSize:13}}>{money(item.price)}</strong></td>
                     <td style={{fontSize:12,color:'#64748b'}}>{item.remarks || '-'}</td>
-                    <td style={{textAlign:'center'}} onClick={e=>e.stopPropagation()}>
+                    <td><span className={'status '+(item.status==='Inactive'?'inactive':'completed')}>{item.status||'Active'}</span></td><td style={{textAlign:'center'}} onClick={e=>e.stopPropagation()}>
                       <div className="dropdown-action-cell" style={{display:'inline-block'}}>
                         <button
                           type="button"
@@ -1051,6 +1051,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
                             >
                               <Pencil size={14}/> Edit
                             </button>
+                            <button type="button" className="dropdown-item" onClick={()=>{setGarmentPrices(current=>current.map(row=>row.id===item.id?{...row,status:row.status==='Inactive'?'Active':'Inactive'}:row));setOpenPriceAction(null);setPriceDropdownPos(null);}}>{item.status==='Inactive'?'Activate':'Mark Inactive'}</button>
                             <button
                               type="button"
                               className="dropdown-item danger"
@@ -1071,7 +1072,7 @@ export function WagePage({employees,workTypes,setWorkTypes,advances,setAdvances,
               })}
               {pagedGarmentPrices.length === 0 && (
                 <tr>
-                  <td colSpan={6} style={{textAlign:'center',padding:'24px 12px',color:'#64748b'}}>
+                  <td colSpan={8} style={{textAlign:'center',padding:'24px 12px',color:'#64748b'}}>
                     No garment prices match your search or filter. Add a new garment price above or click "Load Presets".
                   </td>
                 </tr>

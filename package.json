@@ -1,6 +1,6 @@
 {
   "name": "garment-production-erp",
-  "version": "0.1.0",
+  "version": "1.0.5",
   "description": "ThreadFlow offline garment production and billing ERP",
   "author": "Teli Software",
   "private": true,
@@ -13,22 +13,17 @@
     "desktop:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env THREADFLOW_DEV_SERVER=true electron .\"",
     "desktop:dev:https": "node electron/generate-cert.cjs && cross-env VITE_HTTPS=true concurrently \"vite\" \"wait-on https-get://localhost:5173 && cross-env THREADFLOW_DEV_SERVER=true VITE_HTTPS=true electron .\"",
     "desktop:unpacked": "npm run build && electron-builder --win --dir",
-    "desktop:installer": "npm run build && electron-builder --win nsis",
+    "desktop:installer": "node scripts/release-installer.cjs",
     "cap:add": "npx cap add android",
     "cap:sync": "npm run build && npx cap sync android",
     "cap:open": "npx cap open android",
-    "school:build": "tsc && vite build --config vite.school.config.ts && vite build --config vite.school-worker.config.ts"
+    "school:build": "tsc && vite build --config vite.school.config.ts && vite build --config vite.school-worker.config.ts",
+    "release:next": "node scripts/release-installer.cjs --next"
   },
-  "dependencies": {
+  "devDependencies": {
     "@capacitor/android": "^8.5.1",
     "@capacitor/cli": "^8.5.1",
     "@capacitor/core": "^8.5.1",
-    "firebase": "^13.0.0",
-    "html5-qrcode": "^2.3.8",
-    "jsbarcode": "^3.12.3",
-    "qrcode.react": "^4.2.0"
-  },
-  "devDependencies": {
     "@types/jsbarcode": "^3.11.4",
     "@types/react": "latest",
     "@types/react-dom": "latest",
@@ -37,7 +32,11 @@
     "cross-env": "^10.1.0",
     "electron": "latest",
     "electron-builder": "^26.15.3",
+    "firebase": "^13.0.0",
+    "html5-qrcode": "^2.3.8",
+    "jsbarcode": "^3.12.3",
     "lucide-react": "latest",
+    "qrcode.react": "^4.2.0",
     "react": "latest",
     "react-dom": "latest",
     "selfsigned": "^5.5.0",
@@ -48,7 +47,7 @@
   "build": {
     "appId": "in.teli.threadflow",
     "productName": "Teli ThreadFlow Garment",
-    "copyright": "Copyright \u00c2\u00a9 2026 Teli Software",
+    "copyright": "Copyright Â© 2026 Teli Software",
     "directories": {
       "buildResources": "build",
       "output": "release"
@@ -85,7 +84,7 @@
       "uninstallDisplayName": "Teli ThreadFlow Garment",
       "deleteAppDataOnUninstall": false,
       "runAfterFinish": true,
-      "artifactName": "Teli ThreadFlow Garment Setup ${version}.${ext}"
+      "artifactName": "ThreadFlow-Setup-1.0.005.${ext}"
     }
   }
 }
