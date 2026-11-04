@@ -81,6 +81,7 @@ function publishState<T>(key:string,value:T){
 }
 
 const retailSaveQueues=new Map<string,Promise<void>>();
+const jobSaveQueues=new Map<string,Promise<void>>();
 async function saveState<T>(key:string,value:T){
   const tenantId = getStoredTenantId();
   const write=async()=>{
@@ -96,6 +97,11 @@ async function saveState<T>(key:string,value:T){
     throw err;
   }
   };
+  if(key==='garment-production-job-cards'){
+    const queued=(jobSaveQueues.get(tenantId)||Promise.resolve()).catch(()=>{}).then(write);
+    jobSaveQueues.set(tenantId,queued);
+    return queued;
+  }
   if(key!=='garment-retail-ledger')return write();
   const queued=(retailSaveQueues.get(tenantId)||Promise.resolve()).catch(()=>{}).then(write);
   retailSaveQueues.set(tenantId,queued);return queued;

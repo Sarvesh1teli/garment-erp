@@ -1,6 +1,6 @@
 {
   "name": "garment-production-erp",
-  "version": "1.0.28",
+  "version": "1.0.29",
   "description": "ThreadFlow offline garment production and billing ERP",
   "author": "Teli Software",
   "private": true,
@@ -84,7 +84,7 @@
       "uninstallDisplayName": "Teli ThreadFlow Garment",
       "deleteAppDataOnUninstall": false,
       "runAfterFinish": true,
-      "artifactName": "ThreadFlow-Setup-1.0.028.${ext}",
+      "artifactName": "ThreadFlow-Setup-1.0.029.${ext}",
       "license": "build/copyright-notice.txt"
     }
   }
