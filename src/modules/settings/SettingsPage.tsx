@@ -1,3 +1,5 @@
+import { copyrightNotice } from '../../shared/copyright';
+import { AdminRegistration } from './AdminRegistration';
 import { appVersion, packageVersion, buildDate } from '../../shared/appVersion';
 import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import { Building2, Boxes, Cloud, CreditCard, DatabaseBackup, Download, Link2, RotateCcw, Save, Settings, ShieldCheck, Unlink, Upload, Clock, FileText, Info, Eye, EyeOff, Copy, Check, X } from 'lucide-react';
@@ -51,7 +53,7 @@ const formatBackupDate = (dateVal: string | null | undefined) => {
 
 export function SettingsPage({ company, setCompany, modules, setModules, moduleLabels }: SettingsPageProps) {
   const [businessMode,setBusinessMode]=useStoredState<BusinessMode>('garment-business-mode','both');
-  const [tab, setTab] = useState<'garment' | 'modules' | 'backup' | 'subscription' | 'about'>('garment');
+  const [tab, setTab] = useState<'garment' | 'modules' | 'backup' | 'subscription' | 'cloud' | 'about'>('garment');
   const [backupSubTab, setBackupSubTab] = useState<'automatic' | 'manual'>('automatic');
   const [showOAuthModal, setShowOAuthModal] = useState(false);
   const [oauthClientId, setOauthClientId] = useState('');
@@ -361,6 +363,7 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
 
   return (
     <section className="content settings-page">
+
       <div className="measurement-tabs settings-tabs">
         <button className={tab === 'garment' ? 'active' : ''} onClick={() => setTab('garment')}>
           <Building2 size={16} />
@@ -378,10 +381,12 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
           <CreditCard size={16} />
           <span>Subscription<small>{subscription?.status||'desktop license'}</small></span>
         </button>
+        <button className={tab === 'cloud' ? 'active' : ''} onClick={() => setTab('cloud')}><Cloud size={16}/><span>Cloud-reg<small>Admin registration</small></span></button>
         <button className={tab==='about'?'active':''} onClick={()=>setTab('about')}><Info size={16}/><span>About<small>Version {appVersion}</small></span></button>
       </div>
 
-      {tab==='about'&&<article className="card settings-panel app-about"><h2>About ThreadFlow</h2><p>Garment ERP</p><dl><dt>Version</dt><dd>{appVersion}</dd><dt>Build date</dt><dd>{buildDate}</dd><dt>Internal version</dt><dd>{packageVersion}</dd></dl><h3>Release notes — {appVersion}</h3><ul><li>Business connection recovery through Reset Connection.</li><li>Salary and work breakdown PDF layout corrections.</li><li>Inventory product details and billing improvements.</li></ul></article>}
+      {tab==='cloud'&&<AdminRegistration />}
+      {tab==='about'&&<article className="card settings-panel app-about"><h2>About ThreadFlow</h2><p>Garment ERP</p><p className="software-copyright">{copyrightNotice}</p><dl><dt>Version</dt><dd>{appVersion}</dd><dt>Build date</dt><dd>{buildDate}</dd><dt>Internal version</dt><dd>{packageVersion}</dd></dl><h3>Release notes — {appVersion}</h3><ul><li>Business connection recovery through Reset Connection.</li><li>Salary and work breakdown PDF layout corrections.</li><li>Inventory product details and billing improvements.</li></ul></article>}
       {tab === 'garment' && (
         <article className="card settings-panel">
           <div className="cardhead">
@@ -395,7 +400,7 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
             </div>
           </div>
           <div className="settings-form">
-            <label>Business type<select value={businessMode} onChange={event=>setBusinessMode(event.target.value as BusinessMode)}><option value="both">Both — garment shop and school uniforms</option><option value="shop">Garment Shop</option><option value="school">School Uniform Business</option></select><small>Applies immediately. Changes menu visibility only; existing stock, schools and bills are retained.</small></label>
+            <label className="business-type-field"><span>Business type</span><select aria-describedby="business-type-help" value={businessMode} onChange={event=>setBusinessMode(event.target.value as BusinessMode)}><option value="both">Garment Shop & School Uniforms</option><option value="shop">Garment Shop</option><option value="school">School Uniform Business</option></select><small id="business-type-help">Applies immediately. Changes menu visibility only; existing stock, schools and bills are retained.</small></label>
             <label className="logo-upload">Garment logo
               <input type="file" accept="image/*" onChange={event => uploadLogo(event.target.files?.[0])} />
               <span>{companyDraft.logo ? 'Logo selected' : 'Upload logo for receipts and print'}</span>
@@ -878,9 +883,10 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
         <article className="card settings-panel subscription-manager">
           <div className="subscription-heading"><div><h2>Subscription Management</h2><p>View or renew the offline desktop subscription.</p></div><div className="subscription-brand"><img src="./threadflow-logo.png" alt="Teli ThreadFlow ERP"/><strong>Teli ThreadFlow ERP</strong></div></div>
           {subscription&&<div className="subscription-summary"><div><span>Subscription Start Date</span><strong>{subscriptionDate(subscription.fromDate)}</strong></div><div><span>Subscription End Date</span><strong>{subscriptionDate(subscription.toDate)}</strong></div><div><span>Subscription Status</span><strong className={subscription.status==='Active'?'subscription-active':'subscription-blocked'}>{subscription.status}</strong></div><div><span>Remaining Days</span><strong>{remainingDays(subscription.toDate)}</strong></div></div>}
+          {subscription?.pendingSync&&<p className="subscription-note">{subscription.renewalConflict?'Owner renewal is active locally. Cloud changes need administrator review; your local renewal remains available.':'Owner renewal saved locally and waiting for cloud synchronization.'}</p>}
           <div className="subscription-note">Software Owner authentication is required to change dates or renew the subscription.</div>
           <div className="subscription-renew-form">
-            <label>Authentication<select value={renewal.activationMode} onChange={event=>setRenewal({...renewal,activationMode:event.target.value as 'password'|'license'})}><option value="password">Software Owner Password</option><option value="license">License Key</option></select></label>
+            <label>Authentication<select value={renewal.activationMode} onChange={event=>setRenewal({...renewal,activationMode:event.target.value as 'password'|'license'})}><option value="password">Software Owner Password</option></select></label>
             {renewal.activationMode==='password'?<label>Software Owner Password<input type="password" value={renewal.softwarePassword} onChange={event=>setRenewal({...renewal,softwarePassword:event.target.value})}/></label>:<label>License Key<input value={renewal.licenseKey} onChange={event=>setRenewal({...renewal,licenseKey:event.target.value.toUpperCase()})} placeholder="Enter license key"/></label>}
             <label>From Date<input type="date" value={renewal.fromDate} max={renewal.toDate} onChange={event=>setRenewal({...renewal,fromDate:event.target.value})}/></label>
             <label>To Date<input type="date" value={renewal.toDate} min={renewal.fromDate} onChange={event=>setRenewal({...renewal,toDate:event.target.value})}/></label>

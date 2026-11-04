@@ -1,3 +1,4 @@
+import { DesktopUpdates } from './modules/settings/DesktopUpdates';
 import { appVersion } from './shared/appVersion';
 import { GeneralProduction } from './shared/GeneralProduction';
 import { CommerceProvider } from './shared/CommerceContext';
@@ -140,6 +141,7 @@ function AppWorkspace({ currentUser, onLogout }: AppProps) {
       </aside>
 
       <main>
+        <DesktopUpdates />
         {page === 'Dashboard' ? <DashboardPage assignments={assignments} schools={schools} students={students} /> :
           page === 'School Orders' ? <SchoolOrdersPage schools={schools} businessName={companySettings.name} /> :
           page === 'SMS Gateway' ? <GatewaySettingsPage company={companySettings} /> :

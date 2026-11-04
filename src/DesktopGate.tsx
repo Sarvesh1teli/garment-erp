@@ -1,8 +1,11 @@
+import { copyrightNotice } from './shared/copyright';
+import { DesktopUpdates } from './modules/settings/DesktopUpdates';
 import { useEffect, useState, type ReactNode } from 'react';
 import { KeyRound, RefreshCw } from 'lucide-react';
 import { API_BASE_URL, activateSubscription, getBootstrap, loginDesktop, type BootstrapInfo } from './shared/api';
 import { SaaSControlCenter } from './modules/saas/SaaSControlCenter';
 import { App } from './App';
+import { AdminRegistration } from './modules/settings/AdminRegistration';
 
 const inputDate = (date: Date) => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const displayDate = (value: string) => {
@@ -70,11 +73,13 @@ export function DesktopGate({ children }: { children: ReactNode }) {
     getBootstrap().then(setBootstrap).catch(error => setMessage(error instanceof Error ? error.message : 'Unable to start application')).finally(() => setBusy(false));
   };
   useEffect(load, []);
+  useEffect(()=>{if(!isDesktopRuntime)return;const refresh=()=>{getBootstrap().then(setBootstrap).catch(()=>{});};const timer=window.setInterval(refresh,15000);window.addEventListener('focus',refresh);return ()=>{clearInterval(timer);window.removeEventListener('focus',refresh);};},[isDesktopRuntime]);
 
   const activate = async () => {
     setBusy(true); setMessage('');
     try {
       await activateSubscription(activation);
+      setActivation({...activation,softwarePassword:'',licenseKey:''});
       setBootstrap(await getBootstrap());
       setLogin({ email: 'admin', password: '' });
       setMessage('Subscription saved. Login with admin / 1234.');
@@ -124,7 +129,8 @@ export function DesktopGate({ children }: { children: ReactNode }) {
     finally { setBusy(false); }
   };
 
-  if (loggedIn) {
+  const desktopExpired=isDesktopRuntime&&(!bootstrap?.subscription||bootstrap.subscription.status!=='Active');
+  if (loggedIn && !desktopExpired) {
     if (isSuperAdmin) {
       return <SaaSControlCenter onSignOut={handleLogout} />;
     }
@@ -143,13 +149,14 @@ export function DesktopGate({ children }: { children: ReactNode }) {
     return (
       <div className="startup-screen simple-auth">
         <div className="startup-card simple-card">
+          <DesktopUpdates />
           <Brand />
           <div className="simple-title"><h2>{renewal ? 'Subscription Renewal' : 'First Installation'}</h2><p>{renewal ? `Subscription is ${subscription?.status}. Renew it to continue.` : 'Activate the desktop application.'}</p></div>
           {renewal && <div className="simple-period">Current period: <strong>{displayDate(subscription!.fromDate)}</strong> to <strong>{displayDate(subscription!.toDate)}</strong></div>}
           <div className="simple-form two-column">
             <label>From Date<input type="date" value={activation.fromDate} max={activation.toDate} onChange={e => setActivation({...activation, fromDate:e.target.value})}/></label>
             <label>To Date<input type="date" value={activation.toDate} min={activation.fromDate} onChange={e => setActivation({...activation, toDate:e.target.value})}/></label>
-            <label>Activation Method<select value={activation.activationMode} onChange={e => setActivation({...activation, activationMode:e.target.value as 'password'|'license'})}><option value="password">Software Owner Password</option><option value="license">License Key</option></select></label>
+            <p>Only the software owner can authorize renewal.</p>
             {activation.activationMode === 'password'
               ? <label>Software Owner Password<input type="password" value={activation.softwarePassword} onChange={e => setActivation({...activation, softwarePassword:e.target.value})}/></label>
               : <label>License Key<input value={activation.licenseKey} onChange={e => setActivation({...activation, licenseKey:e.target.value.toUpperCase()})}/></label>}
@@ -157,6 +164,7 @@ export function DesktopGate({ children }: { children: ReactNode }) {
           {!renewal && <div className="simple-admin">Default login: <strong>admin</strong> &nbsp; Password: <strong>1234</strong></div>}
           {message && <p className="startup-error">{message}</p>}
           <button className="simple-primary" disabled={busy} onClick={activate}><KeyRound size={16}/>{busy ? 'Saving...' : renewal ? 'Renew Subscription' : 'Activate'}</button>
+          <AdminRegistration />
           <Support />
         </div>
       </div>
@@ -243,6 +251,7 @@ export function DesktopGate({ children }: { children: ReactNode }) {
           </div>
         )}
         <Support />
+        <p className="software-copyright">{copyrightNotice}</p>
       </div>
     </div>
   );

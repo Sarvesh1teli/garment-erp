@@ -3,6 +3,7 @@ import { ConnectionHistory } from './shared/ConnectionHistory';
 import { disableSchoolPush, setPushSchool } from './shared/schoolPushClient';
 import { useEffect, useMemo, useState } from "react";
 import {
+  Bell,
   CheckCircle2,
   ClipboardList,
   Clock3,
@@ -49,7 +50,7 @@ type Order = {
     createdAt: string;
   }[];
 };
-type Page = "home" | "create" | "history" | "profile";
+type Page = "home" | "create" | "history" | "profile" | "notifications";
 const today = () => new Date().toISOString().slice(0, 10);
 const displayDate = (value?: string) =>
   value
@@ -74,6 +75,7 @@ export function SchoolUniformOrderApp() {
     mobile: "",
     password: "",
   });
+  const [unreadNotices,setUnreadNotices]=useState(0);
   const [page, setPage] = useState<Page>("home");
   const [orders, setOrders] = useState<Order[]>([]);
   const [notice, setNotice] = useState("");
@@ -98,7 +100,7 @@ export function SchoolUniformOrderApp() {
     notes: "",
     items: [{ garmentType: "Shirt", size: "", quantity: 0 }] as OrderItem[],
   });
-  const [filters, setFilters] = useState({ search: "", status: "ALL" });
+  const [filters, setFilters] = useState({ search: "", year: String(new Date().getFullYear()), status: "ALL" });
   const [historyPage, setHistoryPage] = useState(1);
   const [historyPageSize, setHistoryPageSize] = useState(10);
   const [viewOrder, setViewOrder] = useState<Order | null>(null);
@@ -266,6 +268,18 @@ export function SchoolUniformOrderApp() {
           : item,
       ),
     }));
+  const submitDraft = async (order: Order) => {
+    if (busy || order.status !== 'DRAFT') return;
+    setBusy(true);
+    try {
+      const result = await api(`/api/school/orders/${encodeURIComponent(order.id)}/submit`, {method:'POST',body:JSON.stringify({})});
+      setNotice(result.message || 'Order submitted successfully.');
+      setViewOrder(null);
+      await load();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Unable to submit draft.');
+    } finally { setBusy(false); }
+  };
   const saveOrder = async (submit: boolean) => {
     const valid = form.items.filter(
       (item) =>
@@ -309,6 +323,7 @@ export function SchoolUniformOrderApp() {
       orders.filter(
         (order) =>
           (filters.status === "ALL" || order.status === filters.status) &&
+          (!filters.year || order.orderDate.slice(0,4)===filters.year) &&
           (!filters.search ||
             order.orderNo.toLowerCase().includes(filters.search.toLowerCase())),
       ),
@@ -324,7 +339,7 @@ export function SchoolUniformOrderApp() {
   );
   useEffect(() => {
     setHistoryPage(1);
-  }, [filters.search, filters.status, historyPageSize]);
+  }, [filters.search, filters.year, filters.status, historyPageSize]);
   useEffect(() => {
     if (historyPage > historyPages) setHistoryPage(historyPages);
   }, [historyPage, historyPages]);
@@ -509,7 +524,7 @@ export function SchoolUniformOrderApp() {
                 <p>{school?.name} is automatically selected from your login.</p>
               </div>
             </div>
-            <div className="school-form-grid">
+            <div className="school-form-grid school-create-order-meta">
               <label>
                 School
                 <input value={school?.name || ""} readOnly />
@@ -641,7 +656,7 @@ export function SchoolUniformOrderApp() {
                 <p>All garment orders and supplier acknowledgements.</p>
               </div>
             </div>
-            <div className="school-history-filter">
+            <div className="school-history-filter school-order-history-filters">
               <label>
                 <Search />
                 <input
@@ -652,6 +667,7 @@ export function SchoolUniformOrderApp() {
                   }
                 />
               </label>
+              <label><select aria-label="Filter by order year" value={filters.year} onChange={e=>setFilters({...filters,year:e.target.value})}><option value="">All Years</option>{Array.from(new Set([String(new Date().getFullYear()),...orders.map(order=>order.orderDate.slice(0,4)).filter(Boolean)])).sort().reverse().map(year=><option key={year}>{year}</option>)}</select></label>
               <select
                 value={filters.status}
                 onChange={(e) =>
@@ -674,7 +690,7 @@ export function SchoolUniformOrderApp() {
                       <td><strong>{order.orderNo}</strong></td><td>{displayDate(order.orderDate)}</td><td>{displayDate(order.requiredDate)}</td>
                       <td>{order.items.slice(0, 2).map((item, index) => <div key={index}>{item.garmentType} ({item.size}) × {item.quantity}</div>)}{order.items.length > 2 && <small>+{order.items.length - 2} more</small>}</td>
                       <td><strong>{order.totalQuantity}</strong></td><td><span className={`school-status ${order.status.toLowerCase()}`}>{order.status}</span></td>
-                      <td><button className="school-view-btn" onClick={() => setViewOrder(order)}>View</button></td>
+                      <td><div className="school-draft-actions"><button className="school-view-btn" onClick={() => setViewOrder(order)}>View</button>{order.status==='DRAFT'&&<button className="school-main-btn" disabled={busy} onClick={()=>void submitDraft(order)}>{busy?'Please wait…':'Submit Order'}</button>}</div></td>
                     </tr>
                   ))}
                   {!filtered.length && <tr><td colSpan={7}><div className="school-empty"><ClipboardList /><strong>No orders found</strong><span>Create an order or change the selected filter.</span></div></td></tr>}
@@ -684,8 +700,8 @@ export function SchoolUniformOrderApp() {
             {filtered.length > 0 && <div className="school-pagination"><span>Showing {(historyPage - 1) * historyPageSize + 1}–{Math.min(historyPage * historyPageSize, filtered.length)} of {filtered.length}</span><label>Rows <select value={historyPageSize} onChange={(e) => setHistoryPageSize(Number(e.target.value))}><option value="5">5</option><option value="10">10</option><option value="20">20</option></select></label><button disabled={historyPage === 1} onClick={() => setHistoryPage((value) => value - 1)}>Previous</button><strong>{historyPage} / {historyPages}</strong><button disabled={historyPage === historyPages} onClick={() => setHistoryPage((value) => value + 1)}>Next</button></div>}
           </section>
         )}
-        {viewOrder && <div className="school-history-modal-overlay" onClick={() => setViewOrder(null)}><section className="school-history-modal" onClick={(event) => event.stopPropagation()}><div className="school-history-modal-head"><div><h2>{viewOrder.orderNo}</h2><p>{school?.name} · Complete order details</p></div><button onClick={() => setViewOrder(null)}>Close</button></div><div className="school-order-meta"><span>Order date<b>{displayDate(viewOrder.orderDate)}</b></span><span>Required date<b>{displayDate(viewOrder.requiredDate)}</b></span><span>Total items<b>{viewOrder.items.length}</b></span><span>Total quantity<b>{viewOrder.totalQuantity}</b></span><span>Status<b><i className={`school-status ${viewOrder.status.toLowerCase()}`}>{viewOrder.status}</i></b></span><span>School notes<b>{viewOrder.notes || "-"}</b></span></div><div className="school-history-table-wrap"><table className="school-history-table"><thead><tr><th>Garment Type</th><th>Size</th><th>Quantity</th></tr></thead><tbody>{viewOrder.items.map((item, index) => <tr key={index}><td>{item.garmentType}</td><td>{item.size}</td><td><strong>{item.quantity}</strong></td></tr>)}</tbody></table></div>{viewOrder.garmentRemark && <div className="school-ack"><b>Garment acknowledgement</b>{viewOrder.garmentRemark}</div>}{viewOrder.rejectionReason && <div className="school-reject"><b>Rejection reason</b>{viewOrder.rejectionReason}</div>}{viewOrder.history?.length ? <div className="school-timeline"><h3>Order timeline</h3>{viewOrder.history.map((event) => <div key={event.id}><i /><span><b>{event.newStatus}</b>{event.remarks && `${event.remarks} · `}{event.performedBy && `${event.performedBy} · `}{new Date(event.createdAt).toLocaleString("en-IN")}</span></div>)}</div> : null}</section></div>}
-        {school?.id&&<SchoolNotifications token={token} schoolId={school.id} onOrder={id=>void openNotifiedOrder(id)}/>}
+        {viewOrder && <div className="school-history-modal-overlay" onClick={() => setViewOrder(null)}><section className="school-history-modal" onClick={(event) => event.stopPropagation()}><div className="school-history-modal-head"><div><h2>{viewOrder.orderNo}</h2><p>{school?.name} · Complete order details</p></div><button onClick={() => setViewOrder(null)}>Close</button></div><div className="school-order-meta"><span>Order date<b>{displayDate(viewOrder.orderDate)}</b></span><span>Required date<b>{displayDate(viewOrder.requiredDate)}</b></span><span>Total items<b>{viewOrder.items.length}</b></span><span>Total quantity<b>{viewOrder.totalQuantity}</b></span><span>Status<b><i className={`school-status ${viewOrder.status.toLowerCase()}`}>{viewOrder.status}</i></b></span><span>School notes<b>{viewOrder.notes || "-"}</b></span></div><div className="school-history-table-wrap"><table className="school-history-table"><thead><tr><th>Garment Type</th><th>Size</th><th>Quantity</th></tr></thead><tbody>{viewOrder.items.map((item, index) => <tr key={index}><td>{item.garmentType}</td><td>{item.size}</td><td><strong>{item.quantity}</strong></td></tr>)}</tbody></table></div>{viewOrder.status==='DRAFT'&&<div className="school-form-actions"><button className="school-main-btn" disabled={busy} onClick={()=>void submitDraft(viewOrder)}>{busy?'Please wait…':'Submit Order'}</button></div>}{viewOrder.garmentRemark && <div className="school-ack"><b>Garment acknowledgement</b>{viewOrder.garmentRemark}</div>}{viewOrder.rejectionReason && <div className="school-reject"><b>Rejection reason</b>{viewOrder.rejectionReason}</div>}{viewOrder.history?.length ? <div className="school-timeline"><h3>Order timeline</h3>{viewOrder.history.map((event) => <div key={event.id}><i /><span><b>{event.newStatus}</b>{event.remarks && `${event.remarks} · `}{event.performedBy && `${event.performedBy} · `}{new Date(event.createdAt).toLocaleString("en-IN")}</span></div>)}</div> : null}</section></div>}
+        {school?.id&&<SchoolNotifications token={token} schoolId={school.id} visible={page==='notifications'} onViewAll={()=>setPage('notifications')} onUnread={setUnreadNotices} orders={orders} onOrder={id=>void openNotifiedOrder(id)}/>}
         {page === "profile" && (
           <section className="school-page-card">
             <div className="school-page-head">
@@ -773,6 +789,7 @@ export function SchoolUniformOrderApp() {
             { key: "home", label: "Home", icon: Home },
             { key: "create", label: "Create", icon: Plus },
             { key: "history", label: "History", icon: History },
+            { key: "notifications", label: "Notifications", icon: Bell },
             { key: "profile", label: "Profile", icon: UserRound },
           ] as const
         ).map((item) => (
@@ -782,7 +799,7 @@ export function SchoolUniformOrderApp() {
             key={item.key}
           >
             <item.icon />
-            <span>{item.label}</span>
+            <span>{item.label}{item.key==='notifications'&&unreadNotices>0&&<b className="school-unread-badge">{unreadNotices}</b>}</span>
           </button>
         ))}
       </nav>

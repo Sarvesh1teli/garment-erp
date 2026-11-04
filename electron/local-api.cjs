@@ -1338,7 +1338,7 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
   }
 
   let lastScheduledRunDate = '';
-  setInterval(async () => {
+  const backupScheduler = setInterval(async () => {
     try {
       const row = getGoogleDriveRow();
       if (!row || (!row.schedule_enabled && !row.local_backup_enabled && !row.google_drive_backup_enabled)) return;
@@ -1404,21 +1404,16 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
   const findOwnerUser = () => database.prepare('SELECT id FROM app_users WHERE role = ? LIMIT 1').get('Owner');
   const ensureOwnerUser = () => { if (!findOwnerUser()) { const salt = crypto.randomBytes(16).toString('hex'); insertUser.run(crypto.randomUUID(), 'Admin', 'admin', salt, passwordHash(COMMON_CUSTOMER_PASSWORD, salt), 'Owner'); } };
 
-  const subscriptionView = () => {
-    const row=findSubscription.get();
-    if(!row)return null;
-    const now=Date.now();const startsAt=new Date(row.activated_at).getTime();const endsAt=new Date(row.expires_at).getTime();
-    const status = (now < startsAt - 86400000) ? 'Not Started' : (now > endsAt ? 'Expired' : 'Active');
-    return {planName:row.plan_name,fromDate:row.activated_at,toDate:row.expires_at,status,licenseHint:`••••${String(row.license_key).slice(-4)}`};
-  };
+  const subscriptionSync = require('./subscription-sync.cjs').createSubscriptionSync({database,findSubscription,saveSubscription,ownerPassword:SOFTWARE_OWNER_PASSWORD});
+  const subscriptionView = () => subscriptionSync.view();
   const passwordHash=(password,salt)=>crypto.scryptSync(password,salt,64).toString('hex');
   const safeTextEqual=(left,right)=>{const a=Buffer.from(String(left));const b=Buffer.from(String(right));return a.length===b.length&&crypto.timingSafeEqual(a,b)};
   function activateSubscription(value){
     const activationMode=value?.activationMode==='password'?'password':'license';const licenseKey=String(value?.licenseKey||'').trim().toUpperCase();const softwarePassword=String(value?.softwarePassword||'');const planName=String(value?.planName||'Desktop Annual').trim();
     const fromDate=String(value?.fromDate||'');const toDate=String(value?.toDate||'');const datePattern=/^\d{4}-\d{2}-\d{2}$/;
-    if(activationMode==='license'&&licenseKey.length<6)throw new Error('A valid license key is required');
+    if(activationMode==='license')throw new Error('Use software owner authorization to renew');
     if(activationMode==='password'){
-      if(!safeTextEqual(softwarePassword,SOFTWARE_OWNER_PASSWORD) && softwarePassword !== 'admin@2026' && softwarePassword !== 'admin@123')throw new Error('Invalid software owner password');
+      if(!safeTextEqual(softwarePassword,SOFTWARE_OWNER_PASSWORD))throw new Error('Invalid software owner password');
     }
     if(!datePattern.test(fromDate)||!datePattern.test(toDate))throw new Error('From date and to date are required');
     const startsAt=new Date(`${fromDate}T00:00:00.000Z`);const endsAt=new Date(`${toDate}T23:59:59.999Z`);
@@ -1426,8 +1421,9 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     const owner = findOwnerUser();
     database.exec('BEGIN IMMEDIATE');
     try{
+      subscriptionSync.queue(value);
       if(!owner){const name=String(value?.ownerName||'Admin').trim();const email=String(value?.email||'admin').trim().toLowerCase();if(!name||(!email.includes('@')&&email!=='admin'))throw new Error('Use the default admin username or enter a valid owner email');const salt=crypto.randomBytes(16).toString('hex');insertUser.run(crypto.randomUUID(),name,email,salt,passwordHash(COMMON_CUSTOMER_PASSWORD,salt),'Owner')}
-      saveSubscription.run(activationMode==='license'?licenseKey:'PASSWORD-ACTIVATED',planName,startsAt.toISOString(),endsAt.toISOString());database.exec('COMMIT');return subscriptionView();
+      saveSubscription.run(activationMode==='license'?licenseKey:'PASSWORD-ACTIVATED',planName,fromDate+'T00:00:00+05:30',toDate+'T23:59:59.999+05:30');database.exec('COMMIT');return subscriptionView();
     }catch(error){database.exec('ROLLBACK');throw error}
   }
   function login(value){
@@ -1858,6 +1854,7 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     try {
       if (request.method === 'OPTIONS') return json(response, 204, null);
     const url = new URL(request.url || '/', `http://${request.headers.host || '127.0.0.1'}`);
+    if (url.pathname.startsWith('/api/') && !['/api/health','/api/bootstrap','/api/subscription'].includes(url.pathname) && subscriptionView()?.status !== 'Active') return json(response,403,{message:'SUBSCRIPTION_EXPIRED',code:'SUBSCRIPTION_EXPIRED'});
     if (url.pathname.startsWith('/api/v1/gateway/')) return json(response,410,{message:'Use the separate Garment SMS Gateway at https://grm-bill-sms.telisoftware.com'});
     if (url.pathname === '/api/v1/sms-settings' || url.pathname.startsWith('/api/v1/sms-gateway/') || url.pathname === '/api/v1/sms/send') {
       const tenant = getTenantId(request);
@@ -2882,10 +2879,10 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     }
   });
 
-  server.once('close', () => garmentRelay.close());
+  server.once('close', () => { clearInterval(backupScheduler); garmentRelay.close(); });
   return new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(port, '0.0.0.0', () => resolve({ server, database, port }));
+    server.listen(port, '0.0.0.0', () => resolve({ server, database, port, subscriptionSync }));
   });
 }
 

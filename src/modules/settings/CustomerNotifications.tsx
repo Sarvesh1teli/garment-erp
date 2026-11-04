@@ -1,0 +1,20 @@
+import { useEffect, useRef, useState } from 'react';
+type Message={id:string;title:string;message:string;language:string;createdAt:string;expiresAt?:string|null;viewedAt?:string|null};
+type MessageBridge={teliAdminNotifications:()=>Promise<{messages:Message[];error?:string}>;teliAdminNotificationViewed:(id:string)=>Promise<{messages:Message[]}>};
+export function useCustomerNotifications(bridge:unknown,canShow:boolean){
+ const api=bridge as MessageBridge|undefined;
+ const [messages,setMessages]=useState<Message[]>([]),[current,setCurrent]=useState<string|null>(null),[error,setError]=useState('');
+ const dialog=useRef<HTMLDialogElement>(null),dismissed=useRef(new Set<string>()),checking=useRef(false),locallyViewed=useRef(new Set<string>()),sessionClosed=useRef(false),loginIds=useRef<Set<string>|null>(null);
+ const accept=(rows:Message[])=>setMessages(rows.filter(m=>!m.expiresAt||m.expiresAt>new Date().toISOString()).map(m=>locallyViewed.current.has(m.id)?{...m,viewedAt:m.viewedAt||new Date().toISOString()}:m));
+ useEffect(()=>{if(!api?.teliAdminNotifications)return;let alive=true;const check=async()=>{if(checking.current)return;checking.current=true;try{const result=await api.teliAdminNotifications();if(alive){if(loginIds.current===null&&(!result.error||result.messages.length))loginIds.current=new Set(result.messages.filter(m=>!m.viewedAt).map(m=>m.id));accept(result.messages);}}catch{}finally{checking.current=false;}};void check();const timer=setInterval(()=>void check(),60000);window.addEventListener('focus',check);return()=>{alive=false;clearInterval(timer);window.removeEventListener('focus',check);};},[]);
+ useEffect(()=>{if(current&&!messages.some(m=>m.id===current)){setCurrent(null);return;}if(!current&&canShow&&!sessionClosed.current){const next=messages.find(m=>!m.viewedAt&&!!loginIds.current?.has(m.id)&&!dismissed.current.has(m.id));if(next)setCurrent(next.id);}},[messages,current,canShow]);
+ const message=messages.find(m=>m.id===current);
+ useEffect(()=>{const element=dialog.current;if(!element)return;if(message&&canShow&&!element.open)element.showModal();if((!message||!canShow)&&element.open)element.close();},[message,canShow]);
+ const mark=async(id:string)=>{if(!api?.teliAdminNotificationViewed)return;try{const result=await api.teliAdminNotificationViewed(id);locallyViewed.current.add(id);dismissed.current.add(id);accept(result.messages);setError('');}catch{setError('Could not save viewed status. Please try again.');throw Error('Viewed status was not saved');}};
+ const close=async(next:boolean)=>{if(!message)return;try{await mark(message.id);sessionClosed.current=!next;setCurrent(null);}catch{}};
+ const markAll=async()=>{for(const m of messages.filter(m=>!m.viewedAt)){try{await mark(m.id);}catch{break;}}};
+ const unread=messages.filter(m=>!m.viewedAt).length;
+ const items=<>{messages.map(m=><article key={m.id} className="desktop-update-notice"><div className="desktop-update-notice-title"><strong>{m.title}</strong><span>{m.viewedAt?'READ':'NEW'}</span></div><small>{new Date(m.createdAt).toLocaleString('en-IN')}</small><p>{m.message}</p><button type="button" className="desktop-update-details" onClick={()=>{sessionClosed.current=false;setCurrent(m.id);}}>View message</button></article>)}</>;
+ const popup=message?<dialog ref={dialog} className="desktop-update-dialog" aria-label="Customer notification" onCancel={e=>{e.preventDefault();void close(false);}}><div className="desktop-update-dialog-heading"><div><span>CUSTOMER NOTIFICATION</span><h2>{message.title}</h2></div><button type="button" aria-label="Close notification" onClick={()=>void close(false)}>×</button></div><p className="desktop-update-message">{message.message}</p>{error&&<p className="desktop-update-error" role="alert">{error}</p>}<div className="desktop-update-actions">{messages.some(m=>m.id!==message.id&&!m.viewedAt&&!!loginIds.current?.has(m.id)&&!dismissed.current.has(m.id))&&<button type="button" onClick={()=>void close(true)}>Next</button>}<button type="button" onClick={()=>void close(false)}>Close</button></div></dialog>:null;
+ return {items,popup,unread,hasMessages:!!messages.length,markAll};
+}

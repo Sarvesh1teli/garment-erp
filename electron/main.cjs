@@ -1,10 +1,12 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { startLocalApi } = require('./local-api.cjs');
 
 require('./garment-sms-ipc.cjs').setupGarmentSmsIpc(ipcMain);
 let mainWindow;
+let desktopLocalApi;
+require('./teli-admin.cjs').setupTeliAdmin({app,ipcMain,safeStorage,getWindow:()=>mainWindow,getSubscriptionSync:()=>desktopLocalApi?.subscriptionSync,ownerPassword:require('./license-config.cjs').SOFTWARE_OWNER_PASSWORD,openExternal:url=>shell.openExternal(url)});
 require('./garment-cloud.cjs').setupGarmentCloud({app,ipcMain,dialog,safeStorage,getWindow:()=>mainWindow});
 const hasLock = app.requestSingleInstanceLock();
 if (!hasLock) {
@@ -82,7 +84,7 @@ if (hasLock) {
     Menu.setApplicationMenu(null);
     if (app.isPackaged) app.setAppUserModelId('in.teli.threadflow');
     try {
-      await startLocalApi({ dataDirectory: app.getPath('userData') });
+      desktopLocalApi = await startLocalApi({ dataDirectory: app.getPath('userData') });
       createWindow();
     } catch (error) {
       try {

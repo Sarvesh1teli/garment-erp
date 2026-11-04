@@ -1,6 +1,13 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('threadflow', {
+  teliAdminNotifications:()=>ipcRenderer.invoke('teli-admin-notifications'),teliAdminNotificationViewed:id=>ipcRenderer.invoke('teli-admin-notification-viewed',id),
+  teliAdminUpdate: () => ipcRenderer.invoke('teli-admin-update'),
+  teliAdminUpdateShown: id => ipcRenderer.invoke('teli-admin-update-shown', id),
+  teliAdminUpdateDownload: id => ipcRenderer.invoke('teli-admin-update-download', id),
+  teliAdminStatus: () => ipcRenderer.invoke('teli-admin-status'),
+  teliAdminRegister: input => ipcRenderer.invoke('teli-admin-register', input),
+  teliAdminSync: () => ipcRenderer.invoke('teli-admin-sync'),
   garmentSmsRequest: (endpoint,options) => ipcRenderer.invoke('garment-sms-request',endpoint,options),
   savePdf: () => ipcRenderer.invoke('save-pdf'),
   garmentCloudRequest: (endpoint,options) => ipcRenderer.invoke('garment-cloud-request',endpoint,options),

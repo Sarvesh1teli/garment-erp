@@ -87,7 +87,7 @@ export const listGoogleDriveBackups=()=>backupRequest('/google/files') as Promis
 export const downloadGoogleDriveBackup=async(file:GoogleDriveBackupFile)=>{const response=await fetch(`${API_BASE_URL}/api/settings/google-drive/files/${encodeURIComponent(file.id)}/download`,{headers:{'X-Tenant-ID':getActiveTenantId()}});if(!response.ok)throw new Error('Google Drive backup download failed');const blob=await response.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=file.fileName;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)};
 export const restoreGoogleDriveBackup=(id:string)=>publicRequest<{data:BackupManifest}>('/api/settings/google-drive/files/'+encodeURIComponent(id)+'/restore',{method:'POST'});
 
-export type SubscriptionInfo={planName:string;fromDate:string;toDate:string;status:'Active'|'Expired'|'Not Started';licenseHint:string};
+export type SubscriptionInfo={planName:string;fromDate:string;toDate:string;status:'Active'|'Expired'|'Not Started'|'Suspended';licenseHint:string;pendingSync?:boolean;renewalConflict?:boolean;cloudRevision?:number};
 export type BootstrapInfo={subscription:SubscriptionInfo|null;hasUser:boolean};
 export function getActiveTenantId(): string {
   if (typeof window === 'undefined') return 'default';
