@@ -5,7 +5,7 @@ export type StockOwner='general'|'school'|'customer';
 export type ReadyBalance=ProductDetails&{colour?:string;key:string;owner:StockOwner;party:string;gender:string;garment:string;size:string;added:number;physical:number;reserved:number;available:number};
 export type RetailLine=ProductDetails&{colour?:string;stockKey:string;owner:StockOwner;party:string;gender:string;garment:string;size:string;quantity:number;rate:number};
 export type RetailSale={id:string;invoice:Invoice;legacyInvoice?:boolean;lines:RetailLine[];payment?:InvoicePayment;status:'reserved'|'dispatched'|'returned'|'cancelled';dispatchDate?:string;returnDate?:string;refund?:InvoicePayment;credit?:InvoicePayment;reason?:string};
-export type QuickSaleDraft={reuseInvoiceNo?:string;date:string;customer:string;phone:string;mode:'Cash'|'UPI'|'Bank'|'Credit';dispatch:'now'|'later';tax:number;amountReceived?:number;discount?:number;discountType?:'flat'|'percentage';lines:{stockKey:string;quantity:number;rate:number}[]};
+export type QuickSaleDraft={reuseInvoiceNo?:string;date:string;customer:string;phone:string;mode:'Cash'|'UPI'|'Bank'|'Credit';dispatch:'now'|'later';tax:number;advanceAmount?:number;amountReceived?:number;discount?:number;discountType?:'flat'|'percentage';lines:{stockKey:string;quantity:number;rate:number}[]};
 export const stockKey=(owner:StockOwner,party:string,gender:string,garment:string,size:string,colour='',productId='')=>JSON.stringify(productId?[owner,party,gender,garment,size,colour.trim().toLowerCase(),productId]:colour.trim()?[owner,party,gender,garment,size,colour.trim().toLowerCase()]:[owner,party,gender,garment,size]);
 export const isRetailRecord=(value:string)=>value.startsWith('retail:');
 export const retailInvoiceNumbers=(ledger:RetailSale[],includeLegacy=false)=>new Set(ledger.flatMap(sale=>[...(!sale.legacyInvoice||includeLegacy?[sale.invoice.invoiceNo]:[]),...(sale.returnDate?[`CR-${sale.invoice.invoiceNo}`]:[])]));
@@ -83,7 +83,11 @@ export function createRetailSale(ledger:RetailSale[],balances:ReadyBalance[],exi
   if(draft.reuseInvoiceNo&&discount>0)throw Error('Discount cannot be changed while dispatching an existing invoice.');
   const taxable=round(gross-discount),total=round(taxable*(1+draft.tax/100));
   if(total<=0)throw Error('Enter the selling price.');
-  const received=draft.mode==='Credit'?0:round(draft.amountReceived??total);
+  const advance=round(draft.advanceAmount||0);
+  if(!Number.isFinite(advance)||advance<0||advance>total|| (advance>0&&first.owner!=='school'))throw Error('Advance must belong to the selected school and cannot exceed the bill.');
+  const cashReceived=draft.mode==='Credit'?0:round(draft.amountReceived??Math.max(0,total-advance));
+  if(!Number.isFinite(cashReceived)||cashReceived<0)throw Error('Enter a valid amount received now.');
+  const received=round(cashReceived+advance);
   if(!Number.isFinite(received)||received<0||received>total)throw Error('Amount received must be between zero and the bill total.');
   const numbers=[...existingInvoices,...ledger.map(row=>row.invoice)];
   const next=numbers.reduce((max,row)=>Math.max(max,Number(/^QS-(\d+)$/i.exec(row.invoiceNo)?.[1]||0)),0)+1;
@@ -100,7 +104,7 @@ export function createRetailSale(ledger:RetailSale[],balances:ReadyBalance[],exi
     }
     return {id,invoice:{...existing},legacyInvoice:true,lines,status:draft.dispatch==='now'?'dispatched':'reserved',dispatchDate:draft.dispatch==='now'?draft.date:undefined};
   }
-  return {id,invoice,lines,status:draft.dispatch==='now'?'dispatched':'reserved',dispatchDate:draft.dispatch==='now'?draft.date:undefined,payment:received===0?undefined:{id:`retail:${id}:payment`,date:draft.date,invoiceNo,customer,mode:draft.mode,amount:received,reference:invoiceNo,remarks:'Quick Sale payment'}};
+  return {id,invoice,lines,status:draft.dispatch==='now'?'dispatched':'reserved',dispatchDate:draft.dispatch==='now'?draft.date:undefined,payment:received===0?undefined:{id:`retail:${id}:payment`,date:draft.date,invoiceNo,customer,mode:cashReceived===0&&advance>0?'Advance applied':draft.mode,amount:received,advanceAmount:advance||undefined,reference:invoiceNo,remarks:'Quick Sale payment'}};
 }
 
 export function closeRetailSale(sale:RetailSale[],id:string,action:'dispatch'|'return',date:string,payments:InvoicePayment[],reason=''):RetailSale[]{
@@ -111,6 +115,8 @@ export function closeRetailSale(sale:RetailSale[],id:string,action:'dispatch'|'r
   }
   if(current.status!=='reserved'&&current.status!=='dispatched')throw Error('This bill has already been returned or cancelled.');
   const paid=round(payments.filter(row=>row.invoiceNo===current.invoice.invoiceNo).reduce((sum,row)=>sum+row.amount,0));
+  const advanceSources=payments.filter(payment=>payment.invoiceNo===current.invoice.invoiceNo).flatMap(payment=>payment.advanceSources||[]).map(source=>({...source,amount:-source.amount}));
+  const advanceRefund=-payments.filter(payment=>payment.invoiceNo===current.invoice.invoiceNo).reduce((sum,payment)=>sum+(payment.advanceAmount||0),0);
   const settled=payments.filter(row=>row.invoiceNo===current.invoice.invoiceNo).reduce((sum,row)=>sum+row.amount+(row.discount||0),0);
-  return sale.map(row=>row.id!==id?row:{...row,status:row.status==='reserved'?'cancelled':'returned',returnDate:date,reason:reason.trim()||'Full return / cancellation',refund:paid>0?{id:`retail:${id}:refund`,date,invoiceNo:`CR-${row.invoice.invoiceNo}`,customer:row.invoice.customer,mode:'Refund',amount:-paid,reference:row.invoice.invoiceNo,remarks:reason||'Full sale refund',refund:true}:undefined,credit:settled<row.invoice.totalAmount?{id:`retail:${id}:credit`,date,invoiceNo:row.invoice.invoiceNo,customer:row.invoice.customer,mode:'Return credit',amount:0,discount:round(row.invoice.totalAmount-settled),reference:`CR-${row.invoice.invoiceNo}`,remarks:'Credit note settlement; not a cash discount'}:undefined});
+  return sale.map(row=>row.id!==id?row:{...row,status:row.status==='reserved'?'cancelled':'returned',returnDate:date,reason:reason.trim()||'Full return / cancellation',refund:paid>0?{id:`retail:${id}:refund`,date,invoiceNo:`CR-${row.invoice.invoiceNo}`,customer:row.invoice.customer,mode:'Refund',amount:-paid,advanceAmount:advanceRefund||undefined,advanceSources:advanceSources.length?advanceSources:undefined,reference:row.invoice.invoiceNo,remarks:reason||'Full sale refund',refund:true}:undefined,credit:settled<row.invoice.totalAmount?{id:`retail:${id}:credit`,date,invoiceNo:row.invoice.invoiceNo,customer:row.invoice.customer,mode:'Return credit',amount:0,discount:round(row.invoice.totalAmount-settled),reference:`CR-${row.invoice.invoiceNo}`,remarks:'Credit note settlement; not a cash discount'}:undefined});
 }

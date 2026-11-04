@@ -1823,3 +1823,22 @@ body{font-size:15px;background:#eef5f2;font-family:'DM Sans',system-ui,-apple-sy
 .material-entry-overlay>.entry-modal{margin:auto!important;width:min(860px,100%);max-height:calc(100dvh - 48px);overflow-y:auto;flex-shrink:0}
 
 .advance-modal-overlay .advance-delete-confirm{width:min(380px,calc(100vw - 32px));padding:18px 20px}.advance-delete-confirm h2{font-size:17px;margin:0 0 10px}.advance-delete-confirm p{font-size:13px;line-height:1.5;margin:0 0 12px}.advance-delete-confirm>.outline,.advance-delete-confirm>.primary{padding:8px 13px;margin-top:0}
+
+.dashboard-colour-title{color:#14263d!important;border-left:5px solid #f59e0b;padding:9px 14px;background:linear-gradient(90deg,#e7eff9,transparent);border-radius:6px;font-size:23px!important}.dashboard-operations-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0}.dashboard-operations-grid>.card{padding:18px}.dashboard-operations-grid .cardhead{padding:0 0 16px}.dashboard-progress-row{margin-bottom:14px}.dashboard-progress-row>div:first-child{display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px}.dashboard-progress-track{height:13px;border-radius:8px;background:#edf0f4;overflow:hidden}.dashboard-progress-track>span{display:block;height:100%;border-radius:8px}.dashboard-progress-row small{font-size:10px;color:#64748b}.dashboard-stock-note{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;background:#eff6ff;padding:12px;border-radius:8px;font-size:12px;margin-top:14px}.dashboard-output-row{display:grid;grid-template-columns:100px 1fr 65px;gap:10px;align-items:center;font-size:12px;margin:16px 0}.dashboard-output-row strong{text-align:right}.dashboard-expenses-section{margin:14px 0}.dashboard-expenses-section .dashboard-finance-chart{width:100%}.dashboard-empty{color:#64748b;font-size:12px}@media(max-width:850px){.dashboard-operations-grid{grid-template-columns:1fr}}
+
+.business-dashboard .dashboard-colour-title{border:0;padding:4px 0;background:none;color:#0f766e!important;font-size:25px!important;font-weight:800;letter-spacing:-.6px;line-height:1.3}
+.dashboard-colour-title>span{background:linear-gradient(100deg,#1d4ed8,#0891b2);background-clip:text;-webkit-background-clip:text;color:transparent}
+.dashboard-operations-grid .dashboard-finance-chart-body{padding:6px 0;gap:18px;flex-wrap:wrap}.dashboard-operations-grid .dashboard-finance-pie{width:180px;height:180px}.dashboard-operations-grid .dashboard-donut-center{width:70%;height:70%}.dashboard-operations-grid .dashboard-donut-center strong{font-size:16px}.dashboard-operations-grid .dashboard-finance-legend{flex:1;min-width:140px;width:auto}.dashboard-operations-grid .dashboard-finance-legend>div{padding:10px 0;gap:8px}.dashboard-operations-grid .dashboard-finance-legend strong{font-size:16px}.dashboard-operations-grid .dashboard-finance-legend b{font-size:11px}.dashboard-staff-section{margin:14px 0}.dashboard-staff-section>.card{padding:18px}.dashboard-staff-section .cardhead{padding:0 0 12px}
+.business-dashboard .dashboard-heading .dashboard-colour-title>span{display:inline;font:inherit;letter-spacing:inherit;text-transform:none}
+
+.dashboard-staff-status-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:stretch}
+.dashboard-staff-status-grid>.card{min-width:0;margin:0}
+.dashboard-order-status-body{display:flex;align-items:center;justify-content:center;gap:22px;flex-wrap:wrap;padding:15px 0}
+.dashboard-order-status .dashboard-finance-pie{width:175px;height:175px}
+.dashboard-status-legend{flex:1;min-width:170px}
+.dashboard-status-legend>div{display:flex;align-items:center;gap:8px;padding:12px 0;border-bottom:1px solid #e2e8f0;font-size:12px}
+.dashboard-status-legend i{width:11px;height:11px;border-radius:50%;flex-shrink:0}
+.dashboard-status-legend span{flex:1}.dashboard-status-legend small{width:35px;text-align:right;color:#64748b}
+@media(max-width:850px){.dashboard-staff-status-grid{grid-template-columns:1fr}}
+
+.school-advance-panel{background:#eff6ff;border:1px solid #bfdbfe;padding:14px;border-radius:9px;margin:14px 0;font-size:12px}.school-advance-panel>strong{display:block;color:#1e40af;margin-bottom:10px}.school-advance-panel>div{display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin-top:10px}.school-advance-panel label:not(.explicit-discount-toggle){display:grid;gap:5px}.school-advance-panel input[type=number]{padding:9px;border:1px solid #afc5bf;border-radius:7px;width:170px}

@@ -1,3 +1,4 @@
+import { availableSchoolAdvances, cashPaymentAmount } from '../../shared/schoolAdvances';
 import { currentFinancialYear, inFinancialYear } from '../../shared/financialYear';
 import { PaymentSmsAction } from '../../shared/GarmentReceiptSmsActions';
 import { GarmentInvoiceSmsButton } from '../../shared/GarmentInvoiceSmsButton';
@@ -153,6 +154,9 @@ export function extractInvoiceItems(invoice: Invoice, allSales?: StockSale[]): I
 }
 
 export function InvoiceDocument({invoice,company,garment,sales}:{invoice:Invoice;company:CompanySettings;garment?:boolean;sales?:StockSale[]}){
+  const invoiceCommerce=useCommerce();
+  const invoicePayments=invoiceCommerce?.payments.filter(payment=>payment.invoiceNo===invoice.invoiceNo)||[];
+  const invoiceAdvance=invoicePayments.reduce((sum,payment)=>sum+(payment.advanceAmount||0),0);
   const cgst=invoice.taxableAmount*invoice.cgst/100,sgst=invoice.taxableAmount*invoice.sgst/100;
   const garmentName=(invoice.product||'').replace(/\s*\([^)]*\)\s*$/,'');
   const items = extractInvoiceItems(invoice, sales);
@@ -365,6 +369,7 @@ export function InvoiceDocument({invoice,company,garment,sales}:{invoice:Invoice
         </table>
       )}
 
+      {invoiceAdvance>0&&<div className="school-advance-print-summary"><p>Advance applied <strong>{money(invoiceAdvance)}</strong></p><p>Cash / bank received <strong>{money(invoicePayments.reduce((sum,payment)=>sum+cashPaymentAmount(payment),0))}</strong></p><p>Pending balance <strong>{money(Math.max(0,invoice.totalAmount-invoicePayments.reduce((sum,payment)=>sum+payment.amount+(payment.discount||0),0)))}</strong></p></div>}
       <div className="doc-footer">
         <div>
           <b>Terms and conditions</b>
@@ -420,6 +425,7 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
   const [payments,setPayments]=useCommerceState<InvoicePayment[]>('garment-invoice-payments',[]);
   useEffect(()=>{if(payments.some(payment=>payment.id.startsWith('IP-')&&!payment.receiptNo))setPayments(current=>numberLegacyPayments(current));},[payments,setPayments]);
   const [showSchoolPayment,setShowSchoolPayment]=useState(false);
+  const [usePaymentAdvance,setUsePaymentAdvance]=useState(false),[paymentAdvance,setPaymentAdvance]=useState(0);
   const [collectionSchool,setCollectionSchool]=useState(''),[collectionFrom,setCollectionFrom]=useState(''),[collectionTo,setCollectionTo]=useState(''),[collectionMode,setCollectionMode]=useState('');
   const [paymentDiscountEnabled,setPaymentDiscountEnabled]=useState(false),[collectionDiscountEnabled,setCollectionDiscountEnabled]=useState(false);
   const [collectOpen,setCollectOpen]=useState(false);
@@ -554,13 +560,18 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
     setForm(emptyInvoice(customers));setOriginalInvoiceNo(null);setMessage('Invoice saved successfully.');setLastSavedInvoice(saved);setTab('invoices');
   };
   const editInvoice=(invoice:Invoice)=>{if(commerce?.managedInvoice(invoice.invoiceNo)){setTab('quick');setMessage('Use Quick Sale / Returns to manage this stock-linked bill.');return;}setForm(invoice);setOriginalInvoiceNo(invoice.invoiceNo);setTab('create')};
-  const deleteInvoice=(invoice:Invoice)=>{if(commerce?.managedInvoice(invoice.invoiceNo)){setTab('quick');setMessage('Use Cancel bill or Full Return. Linked stock history must be retained.');return;}if(payments.some(payment=>payment.invoiceNo===invoice.invoiceNo)){setMessage('Delete invoice payments before deleting this invoice.');return}if(window.confirm(`Delete invoice ${invoice.invoiceNo}?`))setInvoices(current=>current.filter(item=>item.invoiceNo!==invoice.invoiceNo))};
+  const deleteInvoice=(invoice:Invoice)=>{if(payments.some(payment=>payment.invoiceNo===invoice.invoiceNo&&payment.advanceAmount)){setMessage('This invoice has an applied school advance. Retain its payment history or use the sale return flow.');return;}if(commerce?.managedInvoice(invoice.invoiceNo)){setTab('quick');setMessage('Use Cancel bill or Full Return. Linked stock history must be retained.');return;}if(payments.some(payment=>payment.invoiceNo===invoice.invoiceNo)){setMessage('Delete invoice payments before deleting this invoice.');return}if(window.confirm(`Delete invoice ${invoice.invoiceNo}?`))setInvoices(current=>current.filter(item=>item.invoiceNo!==invoice.invoiceNo))};
   const [collectionType, setCollectionType] = useState<'invoice' | 'advance'>('invoice');
   const [selectedInvoiceNo, setSelectedInvoiceNo] = useState<string>('all');
 
+  useEffect(()=>{setUsePaymentAdvance(false);setPaymentAdvance(0);},[paymentForm.invoiceNo]);
+  const paymentAdvanceAvailable=selectedPaymentInvoice&&schools.some(school=>school.name===selectedPaymentInvoice.customer)?availableSchoolAdvances(selectedPaymentInvoice.customer,schoolCollections,payments,paymentForm.date).reduce((sum,row)=>sum+row.available,0):0;
+  const paymentAdvanceApplied=usePaymentAdvance?paymentAdvance:0;
   const addPayment=()=>{
     const invoice=selectedPaymentInvoice;
-    const amountVal = Number(paymentForm.amount) || 0;
+    const cashNow = Number(paymentForm.amount) || 0;
+    if(!Number.isFinite(cashNow)||cashNow<0||!Number.isFinite(paymentAdvanceApplied)||paymentAdvanceApplied<0){setMessage('Enter valid cash and advance amounts.');return;}
+    const amountVal = cashNow + paymentAdvanceApplied;
     const discountVal = paymentDiscountEnabled?Number(paymentForm.discount):0;
     if(!invoice || (amountVal <= 0 && discountVal <= 0)){
       setMessage('Select an invoice and enter a payment amount or discount.');
@@ -580,27 +591,35 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
       customer: invoice.customer,
       mode: paymentForm.mode,
       amount: amountVal,
+      advanceAmount:paymentAdvanceApplied||undefined,
       discount: discountVal,
       reference: receiptRef,
       remarks: paymentForm.remarks || '-'
     };
     const newPaid = paidFor(invoice.invoiceNo) + amountVal + discountVal;
-    setPayments(current => [payment, ...current]);
+    try {
+      if(paymentAdvanceApplied){
+        if(!commerce)throw Error('School advance settlement is unavailable.');
+        const saved=commerce.recordAdvancePayment(payment);
+        payment.advanceSources=saved.advanceSources;
+      }else setPayments(current => [payment, ...current]);
+    }catch(error){setMessage(error instanceof Error?error.message:'Unable to apply advance.');return;}
+
     setInvoices(current => current.map(item => item.invoiceNo === invoice.invoiceNo ? { ...item, status: newPaid >= item.totalAmount ? 'Paid' : 'Partially Paid' } : item));
     
     // Automatically sync with school collections if invoice belongs to a school
     const isSchool = schools.some(s => s.name.trim().toLowerCase() === invoice.customer.trim().toLowerCase());
-    if (isSchool && (amountVal > 0 || discountVal > 0)) {
+    if (isSchool && !paymentAdvanceApplied && (amountVal > 0 || discountVal > 0)) {
       const discountNote = discountVal > 0 ? ` [Discount: ${money(discountVal)}]` : '';
       const remark = paymentForm.remarks && paymentForm.remarks !== '-' ? `${paymentForm.remarks}${discountNote}` : `Payment for ${invoice.invoiceNo}${discountNote}`;
       setSchoolCollections(current => [[receiptRef, paymentForm.date, invoice.customer, paymentForm.mode, money(amountVal), remark], ...current]);
     }
     
-    setPaymentDiscountEnabled(false);setPaymentForm({ ...paymentForm, amount: 0, discount: 0, reference: '', remarks: '' });
+    setUsePaymentAdvance(false);setPaymentAdvance(0);setPaymentDiscountEnabled(false);setPaymentForm({ ...paymentForm, amount: 0, discount: 0, reference: '', remarks: '' });
     setPaymentPreview(payment);
     setMessage('Invoice payment recorded and synced.');
   };
-  const deletePayment=(payment:InvoicePayment)=>{if(commerce?.ledger.some(sale=>sale.invoice.invoiceNo===payment.invoiceNo&&sale.returnDate)){setMessage('This payment is part of a returned or cancelled sale. Its receipt and refund history must be retained.');return;}if(isRetailRecord(payment.id)){setTab('quick');setMessage('Manage this receipt through Quick Sale / Returns.');return;}
+  const deletePayment=(payment:InvoicePayment)=>{if(payment.advanceAmount){setMessage('This receipt includes an advance application. Retain it for the advance audit trail.');return;}if(commerce?.ledger.some(sale=>sale.invoice.invoiceNo===payment.invoiceNo&&sale.returnDate)){setMessage('This payment is part of a returned or cancelled sale. Its receipt and refund history must be retained.');return;}if(isRetailRecord(payment.id)){setTab('quick');setMessage('Manage this receipt through Quick Sale / Returns.');return;}
     if(!window.confirm(`Delete payment ${payment.id}?`))return;
     const remaining=paidFor(payment.invoiceNo)-(payment.amount + (payment.discount || 0));
     setPayments(current=>current.filter(item=>item.id!==payment.id));
@@ -610,6 +629,7 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
     }
   };
   const deleteSchoolCollection = (receiptNo: string) => {
+    if(payments.some(payment=>payment.advanceSources?.some(source=>source.receipt===receiptNo))){setMessage('This advance has been applied to an invoice. Retain its original receipt.');return;}
     if(payments.some(payment=>payment.reference===receiptNo&&commerce?.ledger.some(sale=>sale.invoice.invoiceNo===payment.invoiceNo&&sale.returnDate))){setMessage('This receipt is linked to a returned or cancelled sale and must be retained with its refund history.');return;}
     if (!window.confirm(`Delete school collection receipt ${receiptNo}?`)) return;
     const linkedPayments = payments.filter(p => p.reference === receiptNo);
@@ -750,7 +770,7 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
     }
 
     setSchoolCollections(current => [
-      [receipt, paymentDate, schoolName, mode, money(amountToCollect), finalRemarks],
+      [receipt, paymentDate, schoolName, mode, money(amountToCollect), finalRemarks, collectionType],
       ...current
     ]);
 
@@ -779,7 +799,7 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
     if(paymentHistoryFrom&&payment.date<paymentHistoryFrom)return false;
     if(paymentHistoryTo&&payment.date>paymentHistoryTo)return false;
     return true;
-  }).map(payment=>[paymentReceiptNumber(payment),payment.date,payment.invoiceNo,payment.customer,money(invoices.find(invoice=>invoice.invoiceNo===payment.invoiceNo)?.totalAmount||0),money(payment.amount),money(historicalBalance(payment)),payment.discount?money(payment.discount):'-',payment.reference]);
+  }).map(payment=>[paymentReceiptNumber(payment),payment.date,payment.invoiceNo,payment.customer,money(invoices.find(invoice=>invoice.invoiceNo===payment.invoiceNo)?.totalAmount||0),money(payment.amount),money(historicalBalance(payment)),payment.discount?money(payment.discount):'-',payment.reference,money(payment.advanceAmount||0),money(cashPaymentAmount(payment))]);
   const schoolReceipts=schoolCashReceipts(payments,schoolCollections,schools.map(school=>school.name)).filter(receipt=>inFinancialYear(receipt.date,invoiceFilterYear));
   const schoolRows=schoolReceipts.map(receipt=>{
     const linked=receipt.payment?[receipt.payment.invoiceNo]:payments.filter(payment=>payment.reference===receipt.number&&payment.customer===receipt.school&&payment.date===receipt.date).map(payment=>payment.invoiceNo);
@@ -955,7 +975,7 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
               </label>
               <div className="payment-pay-now-field">
                 <label>Pay now (₹)<input aria-label="Pay now" type="number" min="0" step="0.01" value={paymentForm.amount} onChange={e=>setPaymentForm({...paymentForm,amount:Number(e.target.value)})}/></label>
-                <button type="button" className="outline" disabled={!selectedPaymentInvoice} onClick={()=>{if(selectedPaymentInvoice)setPaymentForm(f=>({...f,amount:Math.max(0,Math.round((selectedPaymentInvoice.totalAmount-paidFor(selectedPaymentInvoice.invoiceNo)-(paymentDiscountEnabled?f.discount:0))*100)/100)}));}}>Full payment</button>
+                <button type="button" className="outline" disabled={!selectedPaymentInvoice} onClick={()=>{if(selectedPaymentInvoice)setPaymentForm(f=>({...f,amount:Math.max(0,Math.round((selectedPaymentInvoice.totalAmount-paidFor(selectedPaymentInvoice.invoiceNo)-paymentAdvanceApplied-(paymentDiscountEnabled?f.discount:0))*100)/100)}));}}>Full payment</button>
               </div>
 
               <label>
@@ -1007,8 +1027,9 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
               </label>
             </div>
 
+            {selectedPaymentInvoice&&schools.some(school=>school.name===selectedPaymentInvoice.customer)&&<section className="school-advance-panel"><strong>Available school advance {money(paymentAdvanceAvailable)}</strong><label className="explicit-discount-toggle"><input type="checkbox" checked={usePaymentAdvance} onChange={event=>{setUsePaymentAdvance(event.target.checked);setPaymentAdvance(0);}}/> Use advance</label>{usePaymentAdvance&&<div><label>Advance to apply<input type="number" min="0" step="0.01" value={paymentAdvance} onChange={event=>setPaymentAdvance(Number(event.target.value))}/></label><button className="outline" onClick={()=>setPaymentAdvance(Math.max(0,Math.min(paymentAdvanceAvailable,selectedPaymentInvoice.totalAmount-paidFor(selectedPaymentInvoice.invoiceNo)-paymentForm.amount-(paymentDiscountEnabled?paymentForm.discount:0))))}>Apply maximum</button><span>Advance remaining <b>{money(Math.max(0,paymentAdvanceAvailable-paymentAdvanceApplied))}</b></span></div>}</section>}
             <div className="form-actions">
-              {selectedPaymentInvoice&&<div className="payment-entry-breakdown"><span>Billed <b>{money(selectedPaymentInvoice.totalAmount)}</b></span><span>Already paid <b>{money(payments.filter(p=>p.invoiceNo===selectedPaymentInvoice.invoiceNo).reduce((sum,p)=>sum+p.amount,0))}</b></span><span>Current pending <b>{money(Math.max(0,selectedPaymentInvoice.totalAmount-paidFor(selectedPaymentInvoice.invoiceNo)))}</b></span><span>Paying now <b>{money(paymentForm.amount)}</b></span><span>Remaining after payment <b>{money(Math.max(0,selectedPaymentInvoice.totalAmount-paidFor(selectedPaymentInvoice.invoiceNo)-paymentForm.amount-(paymentDiscountEnabled?paymentForm.discount:0)))}</b></span></div>}
+              {selectedPaymentInvoice&&<div className="payment-entry-breakdown"><span>Billed <b>{money(selectedPaymentInvoice.totalAmount)}</b></span><span>Already paid <b>{money(payments.filter(p=>p.invoiceNo===selectedPaymentInvoice.invoiceNo).reduce((sum,p)=>sum+p.amount,0))}</b></span><span>Current pending <b>{money(Math.max(0,selectedPaymentInvoice.totalAmount-paidFor(selectedPaymentInvoice.invoiceNo)))}</b></span><span>Advance applied <b>{money(paymentAdvanceApplied)}</b></span><span>Paying now <b>{money(paymentForm.amount)}</b></span><span>Remaining after payment <b>{money(Math.max(0,selectedPaymentInvoice.totalAmount-paidFor(selectedPaymentInvoice.invoiceNo)-paymentForm.amount-paymentAdvanceApplied-(paymentDiscountEnabled?paymentForm.discount:0)))}</b></span></div>}
               <button className="primary" onClick={addPayment}>
                 <Plus size={16}/> Record payment
               </button>
@@ -1020,16 +1041,16 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
             <label>From Date<input type="date" value={paymentHistoryFrom} onChange={e=>setPaymentHistoryFrom(e.target.value)}/></label>
             <label>To Date<input type="date" value={paymentHistoryTo} min={paymentHistoryFrom||undefined} onChange={e=>setPaymentHistoryTo(e.target.value)}/></label>
             {(paymentHistorySchool!=='All'||paymentHistoryFrom||paymentHistoryTo)&&<button type="button" className="outline" onClick={()=>{setPaymentHistorySchool('All');setPaymentHistoryFrom('');setPaymentHistoryTo('')}}>Clear Filters</button>}
-          </div><Stats className="billing-summary" values={[["Receipts",String(filteredPaymentRows.length),"matching filters"],["Received",money(payments.filter(payment=>filteredPaymentRows.some(row=>row[0]===paymentReceiptNumber(payment)&&row[2]===payment.invoiceNo)).reduce((sum,payment)=>sum+payment.amount,0)),"cash / bank received"],["Discounted",money(payments.filter(payment=>payment.mode!=='Return credit'&&filteredPaymentRows.some(row=>row[0]===paymentReceiptNumber(payment)&&row[2]===payment.invoiceNo)).reduce((sum,payment)=>sum+(payment.discount||0),0)),"settlement waivers"]]}/><Table
+          </div><Stats className="billing-summary" values={[["Receipts",String(filteredPaymentRows.length),"matching filters"],["Received",money(payments.filter(payment=>filteredPaymentRows.some(row=>row[0]===paymentReceiptNumber(payment)&&row[2]===payment.invoiceNo)).reduce((sum,payment)=>sum+cashPaymentAmount(payment),0)),"cash / bank received"],["Discounted",money(payments.filter(payment=>payment.mode!=='Return credit'&&filteredPaymentRows.some(row=>row[0]===paymentReceiptNumber(payment)&&row[2]===payment.invoiceNo)).reduce((sum,payment)=>sum+(payment.discount||0),0)),"settlement waivers"]]}/><Table
             paged sortable title="Invoice payment history"
             copy={`Showing ${filteredPaymentRows.length} of ${payments.length} payment receipts`}
-            headers={['PAYMENT', 'DATE', 'INVOICE', 'CUSTOMER', 'BILLED', 'PAID THIS TIME', 'BALANCE AFTER PAYMENT', 'DISCOUNT THIS TIME', 'REFERENCE']}
+            headers={['PAYMENT', 'DATE', 'INVOICE', 'CUSTOMER', 'BILLED', 'PAID THIS TIME', 'BALANCE AFTER PAYMENT', 'DISCOUNT THIS TIME', 'REFERENCE', 'ADVANCE APPLIED', 'RECEIVED NOW']}
             rows={filteredPaymentRows}
             actions={row => {
               const payment = payments.find(item => paymentReceiptNumber(item) === row[0] && item.invoiceNo===row[2])!;
               const inv = invoices.find(item => item.invoiceNo === payment.invoiceNo);
               const isOpen=openPaymentAction===payment.id;
-              return <div className="dropdown-action-cell"><button type="button" className="outline mini-action dropdown-trigger" onClick={e=>{e.stopPropagation();const rect=(e.currentTarget as HTMLElement).getBoundingClientRect();setPaymentDropdownPos(isOpen?null:{top:rect.bottom+4,left:Math.max(8,rect.right-160)});setOpenPaymentAction(isOpen?null:payment.id)}}>Actions <span className="dropdown-arrow"/></button>{isOpen&&paymentDropdownPos&&<div className="dropdown-menu" style={{top:paymentDropdownPos.top,left:paymentDropdownPos.left}}>{payment.discount&&payment.mode!=='Return credit'&&!isRetailRecord(payment.id)?<button className="dropdown-item" onClick={()=>{setCorrection(payment);setCorrectionDiscount(payment.discount||0);setCorrectionAmount(payment.amount);setCorrectionReason('');setOpenPaymentAction(null);setPaymentDropdownPos(null);}}>Correct Payment / Discount</button>:null}<button type="button" className="dropdown-item" onClick={()=>{setOpenPaymentAction(null);setPaymentDropdownPos(null);setSmsPayment(payment);}}><MessageCircle size={14}/> Send SMS</button><button type="button" className="dropdown-item" onClick={()=>{setOpenPaymentAction(null);setPaymentDropdownPos(null);setPaymentPreview(payment)}}><Printer size={14}/> Print</button><button type="button" className="dropdown-item" style={{color:'#16a34a'}} onClick={()=>{setOpenPaymentAction(null);setPaymentDropdownPos(null);openWhatsApp({phone:inv?.customerPhone,message:formatPaymentReceiptWhatsAppMessage(payment,inv,company)})}}><Send size={14}/> Send</button><button type="button" className="dropdown-item danger" onClick={()=>{setOpenPaymentAction(null);setPaymentDropdownPos(null);deletePayment(payment)}}><Trash2 size={14}/> Delete</button></div>}</div>;
+              return <div className="dropdown-action-cell"><button type="button" className="outline mini-action dropdown-trigger" onClick={e=>{e.stopPropagation();const rect=(e.currentTarget as HTMLElement).getBoundingClientRect();setPaymentDropdownPos(isOpen?null:{top:rect.bottom+4,left:Math.max(8,rect.right-160)});setOpenPaymentAction(isOpen?null:payment.id)}}>Actions <span className="dropdown-arrow"/></button>{isOpen&&paymentDropdownPos&&<div className="dropdown-menu" style={{top:paymentDropdownPos.top,left:paymentDropdownPos.left}}>{payment.discount&&!payment.advanceAmount&&payment.mode!=='Return credit'&&!isRetailRecord(payment.id)?<button className="dropdown-item" onClick={()=>{setCorrection(payment);setCorrectionDiscount(payment.discount||0);setCorrectionAmount(payment.amount);setCorrectionReason('');setOpenPaymentAction(null);setPaymentDropdownPos(null);}}>Correct Payment / Discount</button>:null}<button type="button" className="dropdown-item" onClick={()=>{setOpenPaymentAction(null);setPaymentDropdownPos(null);setSmsPayment(payment);}}><MessageCircle size={14}/> Send SMS</button><button type="button" className="dropdown-item" onClick={()=>{setOpenPaymentAction(null);setPaymentDropdownPos(null);setPaymentPreview(payment)}}><Printer size={14}/> Print</button><button type="button" className="dropdown-item" style={{color:'#16a34a'}} onClick={()=>{setOpenPaymentAction(null);setPaymentDropdownPos(null);openWhatsApp({phone:inv?.customerPhone,message:formatPaymentReceiptWhatsAppMessage(payment,inv,company)})}}><Send size={14}/> Send</button><button type="button" className="dropdown-item danger" onClick={()=>{setOpenPaymentAction(null);setPaymentDropdownPos(null);deletePayment(payment)}}><Trash2 size={14}/> Delete</button></div>}</div>;
             }}
           /></>}
         </article>
@@ -1050,7 +1071,7 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
       const allSchoolDiscounted = payments.filter(payment => inFinancialYear(payment.date,invoiceFilterYear)&&payment.mode!=='Return credit' && invoices.some(invoice => invoice.invoiceNo === payment.invoiceNo && schools.some(school => school.name === invoice.customer))).reduce((sum, payment) => sum + Number(payment.discount || 0), 0);
       const schoolBillDiscount=schoolInvoices.filter(invoice=>invoice.totalAmount>0).reduce((sum,invoice)=>sum+(invoice.discount||0),0);
       const allSchoolBillDiscount=invoices.filter(invoice=>invoice.totalAmount>0&&inFinancialYear(invoice.invoiceDate,invoiceFilterYear)&&schools.some(school=>school.name===invoice.customer)).reduce((sum,invoice)=>sum+(invoice.discount||0),0);
-      const schoolAdvance = Math.max(0, schoolCollTotal + schoolDiscounted - schoolBilled);
+      const schoolAdvance = availableSchoolAdvances(selSchool,schoolCollections,payments,today()).reduce((sum,row)=>sum+row.available,0);
 
       return (
         <>
@@ -1253,6 +1274,7 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
     {showDiscounts&&<div className="stock-modal-overlay commerce-modal"><article className="card measurement-form entry-modal" role="dialog" aria-modal="true" aria-label="Discount details"><div className="form-title"><div><h2>Discounts — {invoiceFilterYear}</h2><p>Bill discounts and agreed payment waivers, with the recipient shown separately.</p></div><button className="outline" onClick={()=>setShowDiscounts(false)}>Close</button></div><Table paged sortable title="Discount recipients" copy="Payment waivers exclude return credits." headers={['DATE','SCHOOL / CUSTOMER','INVOICE','RECEIPT','TYPE','DISCOUNT']} rows={[...invoices.filter(invoice=>inFinancialYear(invoice.invoiceDate,invoiceFilterYear)&&invoice.totalAmount>0&&(invoice.discount||0)>0&&(!collectionSchool||invoice.customer===collectionSchool)&&schools.some(school=>school.name===invoice.customer)).map(invoice=>[invoice.invoiceDate,invoice.customer,invoice.invoiceNo,'—','Bill discount',money(invoice.discount||0)]),...payments.filter(payment=>inFinancialYear(payment.date,invoiceFilterYear)&&payment.mode!=='Return credit'&&(payment.discount||0)>0&&(!collectionSchool||payment.customer===collectionSchool)&&schools.some(school=>school.name===payment.customer)).map(payment=>[payment.date,payment.customer,payment.invoiceNo,paymentReceiptNumber(payment),'Settlement waiver',money(payment.discount||0)])]}/></article></div>}
     {historyInvoice&&<div className="stock-modal-overlay commerce-modal"><article className="card measurement-form entry-modal" role="dialog" aria-modal="true" aria-label="Invoice payment history"><div className="form-title"><h2>Payments — {historyInvoice.customer} · {historyInvoice.invoiceNo}</h2><button className="outline" onClick={()=>setHistoryInvoice(null)}>Close</button></div><Stats values={[["Billed",money(historyInvoice.totalAmount),"invoice amount"],["Total paid",money(payments.filter(p=>p.invoiceNo===historyInvoice.invoiceNo).reduce((sum,p)=>sum+p.amount,0)),"cash / bank received"],["Discounted",money(payments.filter(p=>p.invoiceNo===historyInvoice.invoiceNo).reduce((sum,p)=>sum+(p.discount||0),0)),"explicit settlements"],["Current pending",money(Math.max(0,historyInvoice.totalAmount-paidFor(historyInvoice.invoiceNo))),"latest balance"]]}/><Table paged sortable title="Receipt history" copy="Each balance is the amount remaining immediately after that receipt. Later receipts do not change earlier balances." headers={['RECEIPT','DATE','PAID THIS TIME','DISCOUNT THIS TIME','BALANCE AFTER PAYMENT','STATUS']} rows={paymentBalanceHistory(historyInvoice,payments).map(entry=>[paymentReceiptNumber(entry.payment),entry.payment.date,money(entry.payment.amount),money(entry.payment.discount||0),money(entry.balanceAfter),entry.balanceAfter>0?'Partial':'Paid'])} actions={row=>{const payment=payments.find(p=>p.invoiceNo===historyInvoice.invoiceNo&&paymentReceiptNumber(p)===row[0]);return payment?<div className="table-actions"><button className="outline mini-action" onClick={()=>setPaymentPreview(payment)}>Print</button><button className="outline mini-action" onClick={()=>setSmsPayment(payment)}>Send SMS</button></div>:null;}}/></article></div>}
     {correction&&<div className="stock-modal-overlay commerce-modal"><article className="card measurement-form entry-modal" role="dialog" aria-modal="true" aria-label="Correct payment"><h2>Correct payment / discount</h2><p>{paymentReceiptNumber(correction)} — {correction.invoiceNo}. Enter the actual amount received. No correction is inferred automatically.</p><div className="form-grid"><label>Actual paid amount<input type="number" min="0" step="0.01" value={correctionAmount} onChange={e=>setCorrectionAmount(Number(e.target.value))}/></label><label>Correct discount (0 if none)<input type="number" min="0" step="0.01" value={correctionDiscount} onChange={e=>setCorrectionDiscount(Number(e.target.value))}/></label><label>Reason<input value={correctionReason} onChange={e=>setCorrectionReason(e.target.value)} placeholder="Explain what was incorrect"/></label></div>{message&&<p role="status">{message}</p>}<div className="form-actions"><button className="outline" onClick={()=>setCorrection(null)}>Cancel</button><button className="primary" disabled={!correctionReason.trim()} onClick={()=>{
+      if(correction.advanceAmount){setMessage('This receipt includes an advance application and must retain its original amounts.');return;}
       const invoice=invoices.find(row=>row.invoiceNo===correction.invoiceNo);if(!invoice)return;
       if(commerce?.ledger.some(sale=>sale.invoice.invoiceNo===invoice.invoiceNo&&sale.returnDate)){setMessage('A returned invoice must retain its payment/refund history.');return;}
       const others=payments.filter(row=>row.invoiceNo===invoice.invoiceNo&&row.id!==correction.id).reduce((sum,row)=>sum+row.amount+(row.discount||0),0);

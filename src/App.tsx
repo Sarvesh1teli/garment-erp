@@ -47,6 +47,7 @@ function AppWorkspace({ currentUser, onLogout }: AppProps) {
 
   const handleNavigate = (targetPage: string, params?: Record<string, unknown>) => {
     if (params) setNavParams(params); else setNavParams(null);
+    if (targetPage === 'Production' && params?.tab==='schools') setProductionView('school');
     if (targetPage === 'Customers & Schools') setCustomerResetKey(k => k + 1);
     setPage(targetPage);
     setMobileOpen(false);
@@ -142,7 +143,7 @@ function AppWorkspace({ currentUser, onLogout }: AppProps) {
 
       <main>
         <DesktopUpdates />
-        {page === 'Dashboard' ? <DashboardPage assignments={assignments} schools={schools} students={students} /> :
+        {page === 'Dashboard' ? <DashboardPage assignments={assignments} schools={schools} students={students} onNavigate={handleNavigate} /> :
           page === 'School Orders' ? <SchoolOrdersPage schools={schools} businessName={companySettings.name} /> :
           page === 'SMS Gateway' ? <GatewaySettingsPage company={companySettings} /> :
           page === 'Customers & Schools' ? <CustomersSchools businessMode={businessMode} key={`customers-${customerResetKey}`} company={companySettings} customers={customers} setCustomers={setCustomers} schools={schools} setSchools={setSchools} students={students} garmentPrices={garmentPrices} onNavigate={handleNavigate} navParams={navParams} /> :

@@ -1,3 +1,4 @@
+import { cashPaymentAmount } from './schoolAdvances';
 import type { Invoice, InvoicePayment } from './types';
 
 export type IncomeEntry = {date:string;type:string;ref:string;party:string;description:string;mode:string;amount:number};
@@ -7,7 +8,7 @@ export function cashInvoicePayments(payments:InvoicePayment[], collections:strin
   const normalize=(value:string)=>String(value||'').trim().toLowerCase();
   const receiptKey=(ref:string,party:string,date:string)=>JSON.stringify([normalize(ref),normalize(party),date]);
   const receipts=new Set(collections.filter(row=>row[0]?.trim()).map(row=>receiptKey(row[0],row[2],row[1])));
-  return payments.filter(payment=>
+  return payments.map(payment=>({...payment,amount:cashPaymentAmount(payment)})).filter(payment=>
     (Number(payment.amount)>0 || (payment.refund===true&&Number(payment.amount)<0)) && normalize(payment.mode)!=='advance adjustment' &&
     !receipts.has(receiptKey(payment.reference,payment.customer,payment.date))
   );

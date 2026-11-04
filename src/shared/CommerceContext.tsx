@@ -1,3 +1,4 @@
+import { allocateSchoolAdvance } from './schoolAdvances';
 import { createContext, useContext, useMemo, useRef, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { useStoredState } from './utils';
 import type { CustomerStock, Invoice, InvoicePayment, SchoolStock, StockSale } from './types';
@@ -8,6 +9,7 @@ type CommerceContextValue={
   state:<T>(key:string)=>readonly[T,Dispatch<SetStateAction<T>>]|null;
   addStock:(school:SchoolStock[],customer:CustomerStock[])=>void;
   save:(draft:QuickSaleDraft)=>RetailSale;
+  recordAdvancePayment:(payment:InvoicePayment)=>InvoicePayment;
   transition:(id:string,action:'dispatch'|'return',reason?:string)=>void;
   managedInvoice:(number:string)=>boolean;
 };
@@ -19,8 +21,9 @@ export function CommerceProvider({children}:{children:ReactNode}){
   const [customerStock,setCustomerStock]=useStoredState<CustomerStock[]>('garment-customer-stock',[]);
   const [invoices,setInvoices]=useStoredState<Invoice[]>('garment-invoices',[]);
   const [payments,setPayments]=useStoredState<InvoicePayment[]>('garment-invoice-payments',[]);
+  const [collections]=useStoredState<string[][]>('garment-school-collections',[]);
   const [sales,setSales]=useStoredState<StockSale[]>('garment-stock-sales',[]);
-  const latest=useRef({ledger,schoolStock,customerStock,invoices,payments,sales});latest.current={ledger,schoolStock,customerStock,invoices,payments,sales};
+  const latest=useRef({ledger,schoolStock,customerStock,invoices,payments,sales,collections});latest.current={ledger,schoolStock,customerStock,invoices,payments,sales,collections};
   const projected=useMemo(()=>projectRetail(ledger,payments),[ledger,payments]);
   const allInvoices=useMemo(()=>{
     const closedLegacy=new Set(ledger.filter(row=>row.legacyInvoice&&row.returnDate).map(row=>row.invoice.invoiceNo));
@@ -47,7 +50,27 @@ export function CommerceProvider({children}:{children:ReactNode}){
     const snapshot=latest.current,projection=projectRetail(snapshot.ledger,snapshot.payments);
     if(draft.reuseInvoiceNo&&snapshot.sales.some(row=>row.invoiceNo===draft.reuseInvoiceNo))throw Error('This invoice already has stock issues. Use its existing delivery history.');
     const sale=createRetailSale(snapshot.ledger,readyBalances(snapshot.schoolStock,snapshot.customerStock,[...projection.sales,...snapshot.sales]),snapshot.invoices,draft,crypto.randomUUID());
+    if(draft.advanceAmount){
+      if(!sale.payment)throw Error('The invoice payment could not be created.');
+      sale.payment.advanceSources=allocateSchoolAdvance(sale.invoice.customer,draft.advanceAmount,snapshot.collections,[...projection.payments,...snapshot.payments],draft.date);
+    }
     const next=[sale,...snapshot.ledger];latest.current={...snapshot,ledger:next};setLedger(next);return sale;
+  };
+  const recordAdvancePayment=(payment:InvoicePayment)=>{
+    const snapshot=latest.current;
+    if(snapshot.payments.some(row=>row.id===payment.id))throw Error('This payment has already been recorded.');
+    const projection=projectRetail(snapshot.ledger,snapshot.payments);
+    const currentPayments=[...projection.payments,...snapshot.payments];
+    const invoice=[...projection.invoices,...snapshot.invoices].find(row=>row.invoiceNo===payment.invoiceNo);
+    if(!invoice||invoice.customer!==payment.customer)throw Error('Invoice is unavailable for this school.');
+    const pending=invoice.totalAmount-currentPayments.filter(row=>row.invoiceNo===invoice.invoiceNo).reduce((sum,row)=>sum+row.amount+(row.discount||0),0);
+    if(payment.amount<0||!Number.isFinite(payment.amount)||payment.amount+(payment.discount||0)>pending+.001)throw Error('Payment plus advance and discount cannot exceed the pending bill.');
+    if((payment.advanceAmount||0)>payment.amount)throw Error('Advance cannot exceed the total payment.');
+    const saved={...payment,advanceSources:allocateSchoolAdvance(payment.customer,payment.advanceAmount||0,snapshot.collections,currentPayments,payment.date)};
+    const next=[saved,...snapshot.payments];
+    latest.current={...snapshot,payments:next};
+    setPayments(next);
+    return saved;
   };
   const transition=(id:string,action:'dispatch'|'return',reason='')=>{
     const snapshot=latest.current;
@@ -56,7 +79,7 @@ export function CommerceProvider({children}:{children:ReactNode}){
     const next=closeRetailSale(snapshot.ledger,id,action,new Date().toISOString().slice(0,10),[...projectRetail(snapshot.ledger).payments,...snapshot.payments],reason);
     latest.current={...snapshot,ledger:next};setLedger(next);
   };
-  return <Context.Provider value={{ledger,schoolStock,customerStock,sales:allSales,invoices:allInvoices,payments:allPayments,state,save,transition,managedInvoice:number=>retailInvoiceNumbers(ledger,true).has(number),addStock:(school,customer)=>{if(school.length)setSchoolStock(current=>[...school,...current]);if(customer.length)setCustomerStock(current=>[...customer,...current]);}}}>{children}</Context.Provider>;
+  return <Context.Provider value={{ledger,schoolStock,customerStock,sales:allSales,invoices:allInvoices,payments:allPayments,state,save,recordAdvancePayment,transition,managedInvoice:number=>retailInvoiceNumbers(ledger,true).has(number),addStock:(school,customer)=>{if(school.length)setSchoolStock(current=>[...school,...current]);if(customer.length)setCustomerStock(current=>[...customer,...current]);}}}>{children}</Context.Provider>;
 }
 
 // Legacy screens keep their original storage keys. New bills are read-only projections
