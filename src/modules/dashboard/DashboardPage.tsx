@@ -108,7 +108,7 @@ export function DashboardPage({ assignments, schools, students, onNavigate }: { 
   const chartBackground=expenseSlices.length?`conic-gradient(${expenseSlices.map(row=>`${row.colour} ${row.start}% ${row.end}%`).join(', ')})`:'#e4eeeb';
 
   return <section className="content dashboard-page business-dashboard">
-    <div className="dashboard-heading"><div><h1 className="dashboard-colour-title"><span>Garment ERP</span> Dashboard</h1></div><div className="filterbar salary-filter yearwise-filter"><label>Financial Year<select value={fy} onChange={event => changeFy(event.target.value)}><option>{`${currentFyStart}-${String((currentFyStart + 1) % 100).padStart(2, '0')}`}</option><option>{`${currentFyStart - 1}-${String(currentFyStart % 100).padStart(2, '0')}`}</option></select></label><label>From<input type="date" value={from} onChange={event => setFrom(event.target.value)} /></label><label>To<input type="date" value={to} onChange={event => setTo(event.target.value)} /></label></div></div>
+    <div className="dashboard-heading"><div><h1 className="dashboard-colour-title">Garment ERP Dashboard</h1></div><div className="filterbar salary-filter yearwise-filter"><label>Financial Year<select value={fy} onChange={event => changeFy(event.target.value)}><option>{`${currentFyStart}-${String((currentFyStart + 1) % 100).padStart(2, '0')}`}</option><option>{`${currentFyStart - 1}-${String(currentFyStart % 100).padStart(2, '0')}`}</option></select></label><label>From<input type="date" value={from} onChange={event => setFrom(event.target.value)} /></label><label>To<input type="date" value={to} onChange={event => setTo(event.target.value)} /></label></div></div>
     <Stats className="dashboard-compact-summary" values={[
       [businessMode==='shop'?'Customers':'Active Schools',String(businessMode==='shop'?customers.filter(row=>(row[5]||'Active')==='Active').length:activeSchools),'active records'],
       [businessMode==='shop'?'Active Production Orders':'Active School Orders',String(businessMode==='shop'?generalOrders.filter(order=>order.lines.some(line=>line.done<line.quantity)).length:activeOrderCount),'pending or partially delivered'],
@@ -117,12 +117,8 @@ export function DashboardPage({ assignments, schools, students, onNavigate }: { 
       ['Pending Delivery',`${businessMode==='shop'?(commerce?readyBalances(commerce.schoolStock,commerce.customerStock,commerce.sales).reduce((sum,row)=>sum+row.reserved,0):0):pendingDelivery} Pcs`,businessMode==='shop'?'reserved for delivery':'ordered pieces remaining'],
       ['Active Staff',String(employees.filter(employee=>employee.status==='Active').length),'active employees']
     ]}/>
-    <div className="dashboard-operations-grid">
-      <article className="card dashboard-pipeline"><div className="cardhead"><div><h2>Production Pipeline</h2><p>Order quantities in the selected financial year</p></div></div>{[
-        {name:'Ordered',quantity:businessMode==='shop'?assignedPieces:orderPieces,colour:'#3b82f6'},
-        {name:'Produced',quantity:businessMode==='shop'?completedPieces:producedOrderPieces,colour:'#10b981'},
-        {name:'Delivered',quantity:businessMode==='shop'?deliveredPieces:schoolProgress.reduce((sum,row)=>sum+row.delivered,0),colour:'#8b5cf6'}
-      ].map(row=>{const base=businessMode==='shop'?assignedPieces:orderPieces;const percentage=base?Math.min(100,Math.round(row.quantity/base*100)):0;return <div className="dashboard-progress-row" key={row.name}><div><span>{row.name}</span><strong style={{color:row.colour}}>{row.quantity} pcs</strong></div><div className="dashboard-progress-track"><span style={{width:`${percentage}%`,background:row.colour}}/></div><small>{percentage}% of ordered quantity</small></div>;})}<div className="dashboard-stock-note"><span>Ready stock <b>{readyPieces} pcs</b></span><span>Pending delivery <b>{pendingDelivery} pcs</b></span></div></article>
+    <div className={`dashboard-main-panels ${businessMode==='shop'?'shop-dashboard-panels':''}`}>
+
 
     <article className="card dashboard-finance-chart">
       <div className="cardhead"><div><h2>Expenses by category</h2><p>Expense entries and staff salaries in the selected period</p></div></div>
@@ -137,8 +133,7 @@ export function DashboardPage({ assignments, schools, students, onNavigate }: { 
         </div>
       </div>
     </article>
-    </div>
-    <div className={`dashboard-staff-section ${businessMode!=='shop'?'dashboard-staff-status-grid':''}`}>
+
       <article className="card dashboard-staff-output"><div className="cardhead"><div><h2>Top Staff by Output</h2><p>Work pieces completed in the selected period</p></div></div>{output.slice(0,5).map(row=><div className="dashboard-output-row" key={row.name}><span>{row.name}</span><div className="dashboard-progress-track"><span style={{width:`${row.quantity/(output[0]?.quantity||1)*100}%`,background:'#3b82f6'}}/></div><strong>{row.quantity} pcs</strong></div>)}{!output.length&&<p className="dashboard-empty">No work entries in the selected period.</p>}<div className="dashboard-stock-note"><span>Total staff output</span><b>{totalOutput} work pcs</b></div></article>
       {businessMode!=='shop'&&<article className="card dashboard-order-status">
         <div className="cardhead"><div><h2>School Order Status</h2><p>Orders in the selected year and date range</p></div></div>

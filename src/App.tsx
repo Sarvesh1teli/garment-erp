@@ -1,3 +1,4 @@
+import { accessRequest, ownerRole } from './shared/userAccess';
 import { DesktopUpdates } from './modules/settings/DesktopUpdates';
 import { appVersion } from './shared/appVersion';
 import { GeneralProduction } from './shared/GeneralProduction';
@@ -30,7 +31,7 @@ const nav = [['Dashboard',LayoutDashboard],['School Orders',Network],['SMS Gatew
 const moduleLabels=nav.map(([label])=>label);
 
 type AppProps = {
-  currentUser?: { name?: string; email?: string; role?: string } | null;
+  currentUser?: { name?: string; email?: string; role?: string; modules?:string[] } | null;
   onLogout?: () => void;
 };
 
@@ -39,6 +40,17 @@ export function App(props:AppProps){
 }
 
 function AppWorkspace({ currentUser, onLogout }: AppProps) {
+  const isOwner=ownerRole(currentUser?.role);
+  const [userModules,setUserModules]=useState<string[]>(currentUser?.modules||[]);
+  const allowed=(module:string)=>isOwner||userModules.includes(module);
+  useEffect(()=>{
+    if(isOwner)return;
+    let active=true;
+    const refresh=()=>accessRequest('me').then(user=>{if(active)setUserModules(user.modules||[]);}).catch(error=>{if(active&&error.status===401){setUserModules([]);onLogout?.();}});
+    void refresh();
+    const timer=window.setInterval(refresh,30000);
+    return()=>{active=false;window.clearInterval(timer);};
+  },[isOwner,onLogout]);
   const [page, setPage] = useState('Dashboard');
   const [staffTab, setStaffTab] = useState<'list' | 'add'>('list');
   const [navParams, setNavParams] = useState<Record<string, unknown> | null>(null);
@@ -46,6 +58,7 @@ function AppWorkspace({ currentUser, onLogout }: AppProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const handleNavigate = (targetPage: string, params?: Record<string, unknown>) => {
+    if(!allowed(targetPage))return;
     if (params) setNavParams(params); else setNavParams(null);
     if (targetPage === 'Production' && params?.tab==='schools') setProductionView('school');
     if (targetPage === 'Customers & Schools') setCustomerResetKey(k => k + 1);
@@ -71,10 +84,10 @@ function AppWorkspace({ currentUser, onLogout }: AppProps) {
   const [businessMode]=useStoredState<BusinessMode>('garment-business-mode','both');
   const [productionView,setProductionView]=useState<'general'|'school'>('school');
   useEffect(()=>{if(businessMode==='shop')setProductionView('general');else if(navParams?.openSchool)setProductionView('school');},[businessMode,navParams]);
-  const visibleNav = useMemo(() => nav.filter(([label]) => label === 'Dashboard' || label === 'Settings' || (moduleSettings[label] !== false && (businessMode!=='shop'||label!=='School Orders'))), [moduleSettings,businessMode]);
+  const visibleNav = useMemo(() => nav.filter(([label]) => allowed(label)&&(label === 'Dashboard' || label === 'Settings' || (moduleSettings[label] !== false && (businessMode!=='shop'||label!=='School Orders')))), [moduleSettings,businessMode,isOwner,userModules]);
 
   useEffect(() => {
-    if (!visibleNav.some(([label]) => label === page)) setPage('Dashboard');
+    if (!visibleNav.some(([label]) => label === page)) setPage(visibleNav[0]?.[0]||'Access denied');
   }, [page, visibleNav]);
 
   const rawName=currentUser?.name?.trim()||currentUser?.email?.split('@')[0]||'Admin';
@@ -143,7 +156,7 @@ function AppWorkspace({ currentUser, onLogout }: AppProps) {
 
       <main>
         <DesktopUpdates />
-        {page === 'Dashboard' ? <DashboardPage assignments={assignments} schools={schools} students={students} onNavigate={handleNavigate} /> :
+        {!allowed(page)?<section className="content"><h2>Access unavailable</h2><p>Ask the Owner to enable a module for your account.</p></section>:page === 'Dashboard' ? <DashboardPage assignments={assignments} schools={schools} students={students} onNavigate={handleNavigate} /> :
           page === 'School Orders' ? <SchoolOrdersPage schools={schools} businessName={companySettings.name} /> :
           page === 'SMS Gateway' ? <GatewaySettingsPage company={companySettings} /> :
           page === 'Customers & Schools' ? <CustomersSchools businessMode={businessMode} key={`customers-${customerResetKey}`} company={companySettings} customers={customers} setCustomers={setCustomers} schools={schools} setSchools={setSchools} students={students} garmentPrices={garmentPrices} onNavigate={handleNavigate} navParams={navParams} /> :
@@ -152,14 +165,14 @@ function AppWorkspace({ currentUser, onLogout }: AppProps) {
           page === 'Production' ? <div className="production-workspace"><div className="content production-workspace-menu" style={{paddingBottom:0}}><div className="measurement-tabs wage-tabs"><button className={productionView==='general'?'active':''} onClick={()=>setProductionView('general')}>General / Customer Production</button>{businessMode!=='shop'&&<button className={productionView==='school'?'active':''} onClick={()=>setProductionView('school')}>School Production</button>}</div></div>{productionView==='general'?<GeneralProduction customers={customers} onInventory={()=>handleNavigate('Inventory')} />:<CustomersSchools productionMode company={companySettings} customers={customers} setCustomers={setCustomers} schools={schools} setSchools={setSchools} students={students} garmentPrices={garmentPrices} onNavigate={handleNavigate} navParams={navParams} />}</div> :
           page === 'Staff Management' ? <StaffManagement employees={employeeRecords} setEmployees={setEmployeeRecords} workTypes={workTypes} advances={advances} activeTab={staffTab} onTabChange={setStaffTab} /> :
           page === 'Work Assignment' ? <AssignmentsPage employees={employeeRecords} workTypes={workTypes} customers={customers} assignments={assignments} setAssignments={setAssignments} /> :
-          (page === 'Work Calculation / Salary'||page === 'Master') ? <WagePage key={page} mastersOnly={page==='Master'} employees={employeeRecords} workTypes={workTypes} setWorkTypes={setWorkTypes} advances={advances} setAdvances={setAdvances} workEntries={workEntries} setWorkEntries={setWorkEntries} workTypeHistory={workTypeHistory} setWorkTypeHistory={setWorkTypeHistory} salaryHistory={salaryHistory} setSalaryHistory={setSalaryHistory} attendance={attendance} company={companySettings} garmentPrices={garmentPrices} setGarmentPrices={setGarmentPrices} /> :
+          (page === 'Work Calculation / Salary'||page === 'Master') ? <WagePage allowReports={allowed('Reports')} key={page} mastersOnly={page==='Master'} employees={employeeRecords} workTypes={workTypes} setWorkTypes={setWorkTypes} advances={advances} setAdvances={setAdvances} workEntries={workEntries} setWorkEntries={setWorkEntries} workTypeHistory={workTypeHistory} setWorkTypeHistory={setWorkTypeHistory} salaryHistory={salaryHistory} setSalaryHistory={setSalaryHistory} attendance={attendance} company={companySettings} garmentPrices={garmentPrices} setGarmentPrices={setGarmentPrices} /> :
           page === 'Attendance' ? <AttendancePage employees={employeeRecords} attendance={attendance} setAttendance={setAttendance} company={companySettings} /> :
           page === 'Inventory' ? <InventoryPage company={companySettings} customers={customers} schools={schools} navParams={navParams} onNavigate={handleNavigate} /> :
           page === 'Billing & Payments' ? <BillingPaymentsPage businessMode={businessMode} company={companySettings} customers={customers} schools={schools} students={students} navParams={navParams} onNavigate={handleNavigate} /> :
           page === 'Expenses' ? <ExpensesPage /> :
           page === 'Delivery' ? <DeliveryPage company={companySettings} customers={customers} schools={schools} onNavigate={handleNavigate} /> :
           page === 'Reports' ? <ReportsPage schools={schools} employees={employeeRecords} workTypes={workTypes} advances={advances} workEntries={workEntries} assignments={assignments} customers={customers} /> :
-          page === 'Settings' ? <SettingsPage company={companySettings} setCompany={setCompanySettings} modules={moduleSettings} setModules={setModuleSettings} moduleLabels={moduleLabels} /> :
+          page === 'Settings' ? <SettingsPage isOwner={isOwner} company={companySettings} setCompany={setCompanySettings} modules={moduleSettings} setModules={setModuleSettings} moduleLabels={moduleLabels} /> :
           <Placeholder title={page} />}
       </main>
     </div>

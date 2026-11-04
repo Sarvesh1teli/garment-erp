@@ -1,8 +1,9 @@
+import { UsersAccess } from './UsersAccess';
 import { copyrightNotice } from '../../shared/copyright';
 import { AdminRegistration } from './AdminRegistration';
 import { appVersion, packageVersion, buildDate } from '../../shared/appVersion';
 import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
-import { Building2, Boxes, Cloud, CreditCard, DatabaseBackup, Download, Link2, RotateCcw, Save, Settings, ShieldCheck, Unlink, Upload, Clock, FileText, Info, Eye, EyeOff, Copy, Check, X } from 'lucide-react';
+import { Users, Building2, Boxes, Cloud, CreditCard, DatabaseBackup, Download, Link2, RotateCcw, Save, Settings, ShieldCheck, Unlink, Upload, Clock, FileText, Info, Eye, EyeOff, Copy, Check, X } from 'lucide-react';
 import { activateSubscription, connectGoogleDrive, createBackup, disconnectGoogleDrive, downloadBackup, downloadGoogleDriveBackup, getGoogleDriveBackupStatus, getSubscription, importBackup, listBackups, listGoogleDriveBackups, restoreBackup, restoreGoogleDriveBackup, runGoogleDriveBackup, runLocalBackup, saveGoogleDriveOAuth, saveGoogleDriveSchedule, type BackupManifest, type GoogleDriveBackupFile, type GoogleDriveBackupStatus, type SubscriptionInfo } from '../../shared/api';
 import { SaaSOnboardingModal } from '../saas/SaaSOnboardingModal';
 import { useStoredState } from '../../shared/utils';
@@ -24,6 +25,7 @@ type SettingsPageProps = {
   modules: ModuleSettings;
   setModules: Dispatch<SetStateAction<ModuleSettings>>;
   moduleLabels: string[];
+  isOwner?:boolean;
 };
 
 const lockedModules = new Set(['Dashboard', 'Settings']);
@@ -51,9 +53,9 @@ const formatBackupDate = (dateVal: string | null | undefined) => {
   }
 };
 
-export function SettingsPage({ company, setCompany, modules, setModules, moduleLabels }: SettingsPageProps) {
+export function SettingsPage({ company, setCompany, modules, setModules, moduleLabels, isOwner=true }: SettingsPageProps) {
   const [businessMode,setBusinessMode]=useStoredState<BusinessMode>('garment-business-mode','both');
-  const [tab, setTab] = useState<'garment' | 'modules' | 'backup' | 'subscription' | 'cloud' | 'about'>('garment');
+  const [tab, setTab] = useState<'garment' | 'modules' | 'backup' | 'subscription' | 'cloud' | 'about' | 'users'>('garment');
   const [backupSubTab, setBackupSubTab] = useState<'automatic' | 'manual'>('automatic');
   const [showOAuthModal, setShowOAuthModal] = useState(false);
   const [oauthClientId, setOauthClientId] = useState('');
@@ -382,10 +384,12 @@ export function SettingsPage({ company, setCompany, modules, setModules, moduleL
           <span>Subscription<small>{subscription?.status||'desktop license'}</small></span>
         </button>
         <button className={tab === 'cloud' ? 'active' : ''} onClick={() => setTab('cloud')}><Cloud size={16}/><span>Cloud-reg<small>Admin registration</small></span></button>
+        {isOwner&&<button className={tab==='users'?'active':''} onClick={()=>setTab('users')}><Users size={16}/><span>Users &amp; Access</span></button>}
         <button className={tab==='about'?'active':''} onClick={()=>setTab('about')}><Info size={16}/><span>About<small>Version {appVersion}</small></span></button>
       </div>
 
       {tab==='cloud'&&<AdminRegistration />}
+      {tab==='users'&&isOwner&&<UsersAccess modules={moduleLabels}/>}
       {tab==='about'&&<article className="card settings-panel app-about"><h2>About ThreadFlow</h2><p>Garment ERP</p><p className="software-copyright">{copyrightNotice}</p><dl><dt>Version</dt><dd>{appVersion}</dd><dt>Build date</dt><dd>{buildDate}</dd><dt>Internal version</dt><dd>{packageVersion}</dd></dl><h3>Release notes — {appVersion}</h3><ul><li>Business connection recovery through Reset Connection.</li><li>Salary and work breakdown PDF layout corrections.</li><li>Inventory product details and billing improvements.</li></ul></article>}
       {tab === 'garment' && (
         <article className="card settings-panel">

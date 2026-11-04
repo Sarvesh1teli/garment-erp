@@ -48,7 +48,7 @@ export function DesktopGate({ children }: { children: ReactNode }) {
 
   const [loggedIn, setLoggedIn] = useState<boolean>(savedSessionValid);
   const [isSuperAdmin, setIsSuperAdmin] = useState<boolean>(!isDesktopRuntime && (['superadmin', 'master'].includes(savedSession?.currentUser?.email?.toLowerCase() || '') || savedSession?.currentUser?.role === 'SuperAdmin' || savedSession?.currentUser?.role === 'Master'));
-  const [currentUser, setCurrentUser] = useState<{ id: string; name: string; email: string; role: string } | null>(savedSession?.currentUser || null);
+  const [currentUser, setCurrentUser] = useState<{ id: string; name: string; email: string; role: string; modules?:string[] } | null>(savedSession?.currentUser || null);
 
   useEffect(() => {
     if (isDesktopRuntime && typeof window !== 'undefined') {

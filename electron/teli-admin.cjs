@@ -11,7 +11,7 @@ function setupTeliAdmin({app,ipcMain,safeStorage,getWindow,getSubscriptionSync=(
   async function request(value,endpoint,body){const response=await fetch(value.serverUrl+endpoint,{method:'POST',redirect:'error',headers:{'Content-Type':'application/json',Authorization:'Bearer '+value.installationToken},body:JSON.stringify(body),signal:AbortSignal.timeout(10000)});const result=await response.json();if(!response.ok)throw Error(result.message||'Admin server request failed');if(result.installationId!==value.installationId)throw Error('Admin response does not match this installation');return result;}
   require('./customer-notifications.cjs').setupCustomerNotifications({app,ipcMain,safeStorage,read,request,trusted});
   function validRelease(release){if(!release)return null;const url=new URL(release.downloadUrl);if(release.product!=='garment'||!/^\d+\.\d+\.\d+$/.test(release.version)||url.protocol!=='https:'||!['drive.google.com','docs.google.com'].includes(url.hostname)||url.username||url.password||url.hash)throw Error('Invalid update response');return release;}
-  async function checkUpdate(){if(updateChecking)return updateChecking;updateChecking=(async()=>{const value=read();if(!value?.customerId){latestRelease=null;return;}try{const response=await request(value,'/api/desktop/update',{installationId:value.installationId,version:app.getVersion()});latestRelease=validRelease(response.release);updateError='';}catch(error){latestRelease=null;updateError=error.message;}})().finally(()=>updateChecking=null);return updateChecking;}
+  async function checkUpdate(){if(updateChecking)return updateChecking;updateChecking=(async()=>{try{const value=read();if(!value?.customerId){latestRelease=null;return;}const response=await request(value,'/api/desktop/update',{installationId:value.installationId,version:app.getVersion()});latestRelease=validRelease(response.release);updateError='';}catch(error){latestRelease=null;updateError=error.message;}})().finally(()=>updateChecking=null);return updateChecking;}
   ipcMain.handle('teli-admin-update',async event=>{trusted(event);await checkUpdate();return {release:latestRelease,error:updateError,currentVersion:app.getVersion()};});
   ipcMain.handle('teli-admin-update-shown',async(event,releaseId)=>{trusted(event);if(!latestRelease||latestRelease.id!==releaseId)return;const value=read();await request(value,'/api/desktop/update-event',{installationId:value.installationId,releaseId,event:'SHOWN'});});
   ipcMain.handle('teli-admin-update-download',async(event,releaseId)=>{trusted(event);const value=read();if(!value?.customerId)throw Error('Register this desktop first');await checkUpdate();if(!latestRelease||latestRelease.id!==releaseId)throw Error('This update is no longer available. Check for updates again.');const response=await request(value,'/api/desktop/update-event',{installationId:value.installationId,releaseId,event:'DOWNLOAD_CLICKED'});const release=validRelease(response.release);await openExternal(release.downloadUrl);return {opened:true};});
@@ -35,6 +35,18 @@ function setupTeliAdmin({app,ipcMain,safeStorage,getWindow,getSubscriptionSync=(
     }catch(error){lastError=error.message;throw error;}finally{busy=false;}
   });
   ipcMain.handle('teli-admin-sync',async event=>{trusted(event);await sync();return view(read());});
-  const timer=setInterval(()=>{void sync();void checkUpdate();},60000);timer.unref();app.on('before-quit',()=>clearInterval(timer));void sync();void checkUpdate();
+  let timer=null;
+  let closing=false;
+  const start=()=>{
+    if(closing)return;
+    timer=setInterval(()=>{void sync();void checkUpdate();},60000);
+    timer.unref();
+    void sync();
+    void checkUpdate();
+  };
+  app.on('before-quit',()=>{closing=true;if(timer)clearInterval(timer);});
+  // Credentials must only be decrypted after Electron initializes secure storage.
+  if(typeof app.whenReady==='function')void app.whenReady().then(start);
+  else start();
 }
 module.exports={setupTeliAdmin};

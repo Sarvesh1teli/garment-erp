@@ -1426,6 +1426,8 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
       saveSubscription.run(activationMode==='license'?licenseKey:'PASSWORD-ACTIVATED',planName,fromDate+'T00:00:00+05:30',toDate+'T23:59:59.999+05:30');database.exec('COMMIT');return subscriptionView();
     }catch(error){database.exec('ROLLBACK');throw error}
   }
+  const accessSessions = new Map();
+  const userAccess = require('./user-access.cjs').setupUserAccess({database,sessions:accessSessions,passwordHash});
   function login(value){
     const emailStr=String(value?.email||'').trim();
     const isSuper = ['superadmin', 'master'].includes(emailStr.toLowerCase());
@@ -1448,7 +1450,7 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
       try { database.prepare('UPDATE app_users SET password_salt = ?, password_hash = ? WHERE id = ?').run(salt, passwordHash(value.password, salt), user.id); } catch {}
       user = findUserByEmail.get(emailStr);
     }
-    if(!user && emailStr && (value?.password === 'admin@2026' || value?.password === '1234')){
+    if(!user && emailStr && saasTenantFindByEmail.get(emailStr,emailStr) && (value?.password === 'admin@2026' || value?.password === '1234')){
       const salt=crypto.randomBytes(16).toString('hex');
       const namePart = emailStr.split('@')[0];
       const displayName = namePart.charAt(0).toUpperCase() + namePart.slice(1);
@@ -1460,9 +1462,13 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     const actual=Buffer.from(passwordHash(String(value?.password||''),user.password_salt),'hex');
     const expected=Buffer.from(user.password_hash,'hex');
     if(actual.length!==expected.length||!crypto.timingSafeEqual(actual,expected))throw new Error('Invalid email or password');
-    const tenantId = isSuper ? '_superadmin' : (emailStr.toLowerCase() === 'admin' ? 'default' : emailStr.toLowerCase());
-    if (!isSuper && tenantId !== 'default') claimLegacyDefaultTenantData(tenantId);
-    return{token:crypto.randomBytes(32).toString('hex'),tenantId,user:{id:user.id,name:user.name,email:user.email,role:user.role}}
+    const access = database.prepare('SELECT tenant_id,modules FROM app_user_access WHERE user_id=?').get(user.id);
+    if(user.role==='Staff'&&!access)throw Error('Staff permissions are unavailable. Contact the Owner.');
+    const tenantId = access?.tenant_id || (isSuper ? '_superadmin' : (emailStr.toLowerCase() === 'admin' ? 'default' : emailStr.toLowerCase()));
+    if (!isSuper && user.role!=='Staff' && tenantId !== 'default') claimLegacyDefaultTenantData(tenantId);
+    const token=crypto.randomBytes(32).toString('hex');
+    accessSessions.set(token,{userId:user.id,tenantId});
+    return{token,tenantId,user:{id:user.id,name:user.name,email:user.email,role:user.role,modules:access?JSON.parse(access.modules):undefined}}
   }
 
   function putCompanySettings(value, tenantId = 'default') {
@@ -2456,6 +2462,8 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
       return json(response,405,{message:'Method not allowed'});
     }
     if(url.pathname==='/api/auth/login'&&request.method==='POST'){try{return json(response,200,{data:login(await readJson(request))})}catch(error){return json(response,401,{message:error.message||'Login failed'})}}
+    if(url.pathname==='/api/access/me'){try{return json(response,200,{data:userAccess.current(request)})}catch(error){return json(response,401,{message:error.message})}}
+    if(url.pathname==='/api/access/users'&&['GET','POST'].includes(request.method)){try{return json(response,200,{data:userAccess.handle(request,request.method==='POST'?await readJson(request):{})})}catch(error){return json(response,403,{message:error.message})}}
     if(url.pathname==='/api/auth/verify-master'&&request.method==='POST'){try{const value=await readJson(request);const user=findUserByUsername(value?.username);if(!user||user.role!=='Master'||!authenticateUser(user,value?.password))throw new Error('Master authentication failed');return json(response,200,{data:{username:user.email,role:user.role}})}catch(error){return json(response,401,{message:error.message||'Master authentication failed'})}}
     if(/^\/api\/salary-payments\/[^/]+$/.test(url.pathname)&&request.method==='DELETE'){try{const value=await readJson(request);const user=findUserByUsername(value?.username);if(!user||user.role!=='Master'||!authenticateUser(user,value?.password))throw new Error('Only master can delete salary slips');const id=decodeURIComponent(url.pathname.split('/').pop()||'');const result=salaryPaymentDelete.run(id);if(result.changes===0)throw new Error('Salary slip not found');const tenantId=getTenantId(request);return json(response,200,{data:loadDomain(domains['salary-payments'],tenantId)})}catch(error){return json(response,401,{message:error.message||'Only master can delete salary slips'})}}
 
