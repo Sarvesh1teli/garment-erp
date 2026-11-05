@@ -1,3 +1,4 @@
+import { JobWorkProvider, useJobWork } from './shared/JobWorkContext';
 import { JobCards } from './modules/production/JobCards';
 import { accessRequest, ownerRole } from './shared/userAccess';
 import { DesktopUpdates } from './modules/settings/DesktopUpdates';
@@ -37,7 +38,7 @@ type AppProps = {
 };
 
 export function App(props:AppProps){
-  return <GarmentTypesProvider><CommerceProvider><AppWorkspace {...props}/></CommerceProvider></GarmentTypesProvider>;
+  return <GarmentTypesProvider><CommerceProvider><JobWorkProvider><AppWorkspace {...props}/></JobWorkProvider></CommerceProvider></GarmentTypesProvider>;
 }
 
 function AppWorkspace({ currentUser, onLogout }: AppProps) {
@@ -70,7 +71,8 @@ function AppWorkspace({ currentUser, onLogout }: AppProps) {
   const [employeeRecords, setEmployeeRecords] = useStoredState<Employee[]>('garment-employees', employees);
   const [workTypes, setWorkTypes] = useStoredState<WorkType[]>('garment-work-types', defaultWorkTypes);
   const [advances, setAdvances] = useStoredState<AdvanceEntry[]>('garment-advances', defaultAdvances);
-  const [workEntries, setWorkEntries] = useStoredState<WorkEntry[]>('garment-work-entries', defaultWorkEntries);
+  const [manualWorkEntries, setWorkEntries] = useStoredState<WorkEntry[]>('garment-work-entries', defaultWorkEntries);
+  const workEntries=useJobWork()?.entries||manualWorkEntries;
   const [workTypeHistory, setWorkTypeHistory] = useStoredState<string[][]>('garment-work-type-history', []);
   const [salaryHistory, setSalaryHistory] = useStoredState<SalaryPayment[]>('garment-salary-history', defaultSalaryHistory);
   const [attendance, setAttendance] = useStoredState<AttendanceEntry[]>('garment-attendance', defaultAttendance);
@@ -163,7 +165,7 @@ function AppWorkspace({ currentUser, onLogout }: AppProps) {
           page === 'Customers & Schools' ? <CustomersSchools businessMode={businessMode} key={`customers-${customerResetKey}`} company={companySettings} customers={customers} setCustomers={setCustomers} schools={schools} setSchools={setSchools} students={students} garmentPrices={garmentPrices} onNavigate={handleNavigate} navParams={navParams} /> :
           page === 'Measurements' && businessMode==='shop' ? <GeneralProduction customers={customers} onInventory={()=>handleNavigate('Inventory')} /> :
           page === 'Measurements' ? <Measurements company={companySettings} schools={schools} students={students} setStudents={setStudents} /> :
-          page === 'Production' ? <div className="production-workspace"><div className="content production-workspace-menu" style={{paddingBottom:0}}><div className="measurement-tabs wage-tabs"><button className={productionView==='general'?'active':''} onClick={()=>setProductionView('general')}>General / Customer Production</button>{businessMode!=='shop'&&<button className={productionView==='school'?'active':''} onClick={()=>setProductionView('school')}>School Production</button>}<button className={productionView==='jobs'?'active':''} onClick={()=>setProductionView('jobs')}>Job Cards</button></div></div>{productionView==='jobs'?<JobCards schools={schools} customers={customers} employees={employeeRecords} workTypes={workTypes}/>:productionView==='general'?<GeneralProduction customers={customers} onInventory={()=>handleNavigate('Inventory')} />:<CustomersSchools productionMode company={companySettings} customers={customers} setCustomers={setCustomers} schools={schools} setSchools={setSchools} students={students} garmentPrices={garmentPrices} onNavigate={handleNavigate} navParams={navParams} />}</div> :
+          page === 'Production' ? <div className="production-workspace"><div className="content production-workspace-menu" style={{paddingBottom:0}}><div className="measurement-tabs wage-tabs"><button className={productionView==='general'?'active':''} onClick={()=>setProductionView('general')}>General / Customer Production</button>{businessMode!=='shop'&&<button className={productionView==='school'?'active':''} onClick={()=>setProductionView('school')}>School Production</button>}<button className={productionView==='jobs'?'active':''} onClick={()=>setProductionView('jobs')}>Job Cards</button></div></div>{productionView==='jobs'?<JobCards allowSalaryLink={allowed('Work Calculation / Salary')} schools={schools} customers={customers} employees={employeeRecords} workTypes={workTypes}/>:productionView==='general'?<GeneralProduction customers={customers} onInventory={()=>handleNavigate('Inventory')} />:<CustomersSchools productionMode company={companySettings} customers={customers} setCustomers={setCustomers} schools={schools} setSchools={setSchools} students={students} garmentPrices={garmentPrices} onNavigate={handleNavigate} navParams={navParams} />}</div> :
           page === 'Staff Management' ? <StaffManagement employees={employeeRecords} setEmployees={setEmployeeRecords} workTypes={workTypes} advances={advances} activeTab={staffTab} onTabChange={setStaffTab} /> :
           page === 'Work Assignment' ? <AssignmentsPage employees={employeeRecords} workTypes={workTypes} customers={customers} assignments={assignments} setAssignments={setAssignments} /> :
           (page === 'Work Calculation / Salary'||page === 'Master') ? <WagePage allowReports={allowed('Reports')} key={page} mastersOnly={page==='Master'} employees={employeeRecords} workTypes={workTypes} setWorkTypes={setWorkTypes} advances={advances} setAdvances={setAdvances} workEntries={workEntries} setWorkEntries={setWorkEntries} workTypeHistory={workTypeHistory} setWorkTypeHistory={setWorkTypeHistory} salaryHistory={salaryHistory} setSalaryHistory={setSalaryHistory} attendance={attendance} company={companySettings} garmentPrices={garmentPrices} setGarmentPrices={setGarmentPrices} /> :

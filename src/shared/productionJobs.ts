@@ -15,6 +15,8 @@ export type JobProgress = {
   quantity: number;
   remarks: string;
   createdAt: string;
+  salary?: { workTypeId: string; name: string; rate: number; code?: string; unit: string };
+  voided?: boolean;
 };
 
 export type ProductionJob = {
@@ -31,14 +33,15 @@ export type ProductionJob = {
   quantity: number;
   operations: JobOperation[];
   progress: JobProgress[];
+  audit?: { progressId: string; previous: JobProgress; reason: string; at: string }[];
 };
 
 export const operationCompleted = (job: ProductionJob, operationId: string) =>
-  job.progress.filter(entry => entry.operationId === operationId).reduce((sum, entry) => sum + entry.quantity, 0);
+  job.progress.filter(entry => !entry.voided && entry.operationId === operationId).reduce((sum, entry) => sum + entry.quantity, 0);
 
 export function jobStatus(job: ProductionJob) {
   if (job.operations.every(operation => operationCompleted(job, operation.id) >= operation.target)) return 'Completed';
-  return job.progress.length ? 'In Progress' : 'Pending';
+  return job.progress.some(entry => !entry.voided) ? 'In Progress' : 'Pending';
 }
 
 export function validateProductionJob(job: ProductionJob) {

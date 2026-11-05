@@ -1854,3 +1854,86 @@ body{font-size:15px;background:#eef5f2;font-family:'DM Sans',system-ui,-apple-sy
 @media(max-width:700px){.dashboard-main-panels,.dashboard-main-panels.shop-dashboard-panels{grid-template-columns:1fr}.dashboard-main-panels>.dashboard-order-status{grid-column:auto}}
 
 .job-card-filters{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:14px}.job-card-filters label{display:grid;gap:6px;font-size:12px;flex:0 1 180px}.job-card-filters select,.job-operation-entry input,.job-operation-entry select{width:100%;padding:9px 10px;border:1px solid #afc5bf;border-radius:7px;font-size:12px;background:white}.job-dialog-overlay{position:fixed;inset:0;z-index:15000;display:flex;align-items:center;justify-content:center;padding:24px 16px;overflow:auto;background:#10241f80}.job-dialog{width:min(950px,100%);max-height:calc(100dvh - 48px);overflow:auto;margin:auto;padding:22px}.job-operation-entry{display:grid;grid-template-columns:1.2fr .7fr 1fr auto;gap:10px;align-items:end;margin:12px 0}.job-operation-entry label{display:grid;gap:6px;font-size:12px}.job-table-actions{display:flex;gap:6px}.job-table-actions button{padding:6px 9px;white-space:nowrap;font-size:11px}.job-detail-meta{display:flex;flex-wrap:wrap;gap:14px;padding:14px;margin:14px 0;border-radius:8px;background:#eff6ff;font-size:12px}.job-dialog .module-table{margin:16px 0}.job-dialog .form-actions{margin-top:18px}.job-dialog .form-title h2{font-size:17px}.job-dialog-overlay:has(.job-progress-entry){z-index:15010}.job-dialog-overlay:has(.job-progress-entry)>.job-dialog{max-width:650px}.job-progress-entry .form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}@media(max-width:700px){.job-operation-entry{grid-template-columns:1fr 1fr}.job-dialog .form-grid{grid-template-columns:1fr 1fr}.job-dialog .form-grid .wide{grid-column:1/-1}}
+
+.job-salary-link {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid #cbded8;
+  border-radius: 8px;
+  background: #f4faf7;
+}
+.job-salary-link label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.job-salary-link input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+.job-salary-link p {
+  margin: 8px 0;
+  font-size: 12px;
+}
+.job-salary-link select {
+  flex: 1;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #afc5bf;
+  border-radius: 7px;
+  background: white;
+}
+
+.work-entry-tabs { margin-bottom: 14px; }
+.daily-work-entry-panel { margin-bottom: 17px; }
+.daily-work-entry-panel .work-job-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+  padding: 14px;
+  margin-bottom: 16px;
+  border: 1px solid #dce6ed;
+  border-radius: 8px;
+  background: #f7fafc;
+}
+.work-job-fields label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #52605c;
+}
+.work-job-fields select {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 9px 10px;
+  border: 1px solid #c6d5db;
+  border-radius: 7px;
+  background: white;
+  font: inherit;
+  font-weight: 400;
+  color: #293b36;
+}
+.work-job-details {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #526779;
+}
+.daily-work-entry-panel .advance-form {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px 16px;
+}
+.daily-work-entry-panel .advance-form .primary { justify-self: start; }
+@media(max-width: 760px) {
+  .daily-work-entry-panel .advance-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media(max-width: 520px) {
+  .daily-work-entry-panel .work-job-fields,
+  .daily-work-entry-panel .advance-form { grid-template-columns: minmax(0, 1fr); }
+}

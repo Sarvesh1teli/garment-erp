@@ -1,3 +1,4 @@
+import { useJobWork } from '../../shared/JobWorkContext';
 import { schoolOrderHistory } from '../../shared/schoolOrderHistory';
 import type { BulkOrder } from '../../shared/bulkOrders';
 import { readyBalances } from '../../shared/commerce';
@@ -19,7 +20,8 @@ export function DashboardPage({ assignments, schools, students, onNavigate }: { 
   const [generalOrders]=useCommerceState<ProductionOrder[]>('garment-general-production',[]);
   const [customers]=useCommerceState<string[][]>('garment-customers',[]);
   const [employees]=useCommerceState<Employee[]>('garment-employees',[]);
-  const [workEntries]=useCommerceState<WorkEntry[]>('garment-work-entries',[]);
+  const [manualWorkEntries]=useCommerceState<WorkEntry[]>('garment-work-entries',[]);
+  const workEntries=useJobWork()?.entries||manualWorkEntries;
   const [bulkOrders]=useCommerceState<BulkOrder[]>('garment-bulk-orders',[]);
   const [chartHover,setChartHover] = useState<string|null>(null);
   const now = new Date();
