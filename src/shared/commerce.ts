@@ -84,7 +84,7 @@ export function createRetailSale(ledger:RetailSale[],balances:ReadyBalance[],exi
   const taxable=round(gross-discount),total=round(taxable*(1+draft.tax/100));
   if(total<=0)throw Error('Enter the selling price.');
   const advance=round(draft.advanceAmount||0);
-  if(!Number.isFinite(advance)||advance<0||advance>total|| (advance>0&&first.owner!=='school'))throw Error('Advance must belong to the selected school and cannot exceed the bill.');
+  if(!Number.isFinite(advance)||advance<0||advance>total|| (advance>0&&first.owner==='general'))throw Error('Advance must belong to the selected school or customer and cannot exceed the bill.');
   const cashReceived=draft.mode==='Credit'?0:round(draft.amountReceived??Math.max(0,total-advance));
   if(!Number.isFinite(cashReceived)||cashReceived<0)throw Error('Enter a valid amount received now.');
   const received=round(cashReceived+advance);

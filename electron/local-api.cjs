@@ -1406,6 +1406,10 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
 
   const subscriptionSync = require('./subscription-sync.cjs').createSubscriptionSync({database,findSubscription,saveSubscription,ownerPassword:SOFTWARE_OWNER_PASSWORD});
   const subscriptionView = () => subscriptionSync.view();
+  const subscriptionAccessActive = () => {
+    const subscription = subscriptionView();
+    return (subscription?.accessStatus ?? subscription?.status) === 'Active';
+  };
   const passwordHash=(password,salt)=>crypto.scryptSync(password,salt,64).toString('hex');
   const safeTextEqual=(left,right)=>{const a=Buffer.from(String(left));const b=Buffer.from(String(right));return a.length===b.length&&crypto.timingSafeEqual(a,b)};
   function activateSubscription(value){
@@ -1443,7 +1447,7 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     }
 
     const subscription=subscriptionView();
-    if(!subscription||subscription.status!=='Active')throw new Error('Subscription activation or 14-day trial renewal is required');
+    if(!subscription||(subscription.accessStatus??subscription.status)!=='Active')throw new Error('Subscription activation or 14-day trial renewal is required');
     let user=findUserByEmail.get(emailStr);
     if (user && (emailStr.toLowerCase() === 'admin' || emailStr.toLowerCase() === 'master') && (value?.password === '1234' || value?.password === 'admin@2026')) {
       const salt = crypto.randomBytes(16).toString('hex');
@@ -1851,7 +1855,7 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
   }
 
   garmentRelay = createGarmentSmsRelay({ database, dataDirectory,
-    subscriptionActive: () => subscriptionView()?.status === 'Active',
+    subscriptionActive: () => subscriptionAccessActive(),
     companyName: tenant => findCompanySettings.get(tenant)?.name || 'Garment business',
     legacySettings: getSmsSettings });
   ensureMasterUser();
@@ -1860,7 +1864,7 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
     try {
       if (request.method === 'OPTIONS') return json(response, 204, null);
     const url = new URL(request.url || '/', `http://${request.headers.host || '127.0.0.1'}`);
-    if (url.pathname.startsWith('/api/') && !['/api/health','/api/bootstrap','/api/subscription'].includes(url.pathname) && subscriptionView()?.status !== 'Active') return json(response,403,{message:'SUBSCRIPTION_EXPIRED',code:'SUBSCRIPTION_EXPIRED'});
+    if (url.pathname.startsWith('/api/') && !['/api/health','/api/bootstrap','/api/subscription'].includes(url.pathname) && !subscriptionAccessActive()) return json(response,403,{message:'SUBSCRIPTION_EXPIRED',code:'SUBSCRIPTION_EXPIRED'});
     if (url.pathname.startsWith('/api/v1/gateway/')) return json(response,410,{message:'Use the separate Garment SMS Gateway at https://grm-bill-sms.telisoftware.com'});
     if (url.pathname === '/api/v1/sms-settings' || url.pathname.startsWith('/api/v1/sms-gateway/') || url.pathname === '/api/v1/sms/send') {
       const tenant = getTenantId(request);
@@ -1875,7 +1879,7 @@ function startLocalApi({ dataDirectory, port = DEFAULT_PORT }) {
         }
         if(url.pathname==='/api/v1/sms-gateway/register'&&request.method==='POST') return json(response,200,await garmentRelay.register(tenant));
         if(url.pathname==='/api/v1/sms-gateway/key'&&request.method==='POST') {
-          if(subscriptionView()?.status!=='Active')throw new Error('An active subscription is required.');
+          if(!subscriptionAccessActive())throw new Error('An active subscription is required.');
           let row=garmentRelay.get(tenant);if(!row.code){await garmentRelay.register(tenant);row=garmentRelay.get(tenant);}
           const result=await garmentRelay.cloud(row,'/pairings',{deviceName:'Garment SMS Phone'});
           return json(response,200,{deviceKey:result.pairingCode,expiresAt:result.expiresAt,organizationCode:result.shopCode});

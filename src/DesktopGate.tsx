@@ -129,7 +129,7 @@ export function DesktopGate({ children }: { children: ReactNode }) {
     finally { setBusy(false); }
   };
 
-  const desktopExpired=isDesktopRuntime&&(!bootstrap?.subscription||bootstrap.subscription.status!=='Active');
+  const desktopExpired=isDesktopRuntime&&(!bootstrap?.subscription||(bootstrap.subscription.accessStatus??bootstrap.subscription.status)!=='Active');
   if (loggedIn && !desktopExpired) {
     if (isSuperAdmin) {
       return <SaaSControlCenter onSignOut={handleLogout} />;
@@ -142,7 +142,7 @@ export function DesktopGate({ children }: { children: ReactNode }) {
   // License activation belongs to the offline Electron desktop build only.
   // Hosted browser/PWA customers must first register or sign in to an
   // approved PostgreSQL tenant; they do not have a tenant before login.
-  const needsActivation = isDesktopRuntime && (!subscription || subscription.status !== 'Active');
+  const needsActivation = isDesktopRuntime && (!subscription || (subscription.accessStatus ?? subscription.status) !== 'Active');
 
   if (needsActivation) {
     const renewal = Boolean(subscription);

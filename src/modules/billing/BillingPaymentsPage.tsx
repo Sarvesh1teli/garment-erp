@@ -560,12 +560,13 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
     setForm(emptyInvoice(customers));setOriginalInvoiceNo(null);setMessage('Invoice saved successfully.');setLastSavedInvoice(saved);setTab('invoices');
   };
   const editInvoice=(invoice:Invoice)=>{if(commerce?.managedInvoice(invoice.invoiceNo)){setTab('quick');setMessage('Use Quick Sale / Returns to manage this stock-linked bill.');return;}setForm(invoice);setOriginalInvoiceNo(invoice.invoiceNo);setTab('create')};
-  const deleteInvoice=(invoice:Invoice)=>{if(payments.some(payment=>payment.invoiceNo===invoice.invoiceNo&&payment.advanceAmount)){setMessage('This invoice has an applied school advance. Retain its payment history or use the sale return flow.');return;}if(commerce?.managedInvoice(invoice.invoiceNo)){setTab('quick');setMessage('Use Cancel bill or Full Return. Linked stock history must be retained.');return;}if(payments.some(payment=>payment.invoiceNo===invoice.invoiceNo)){setMessage('Delete invoice payments before deleting this invoice.');return}if(window.confirm(`Delete invoice ${invoice.invoiceNo}?`))setInvoices(current=>current.filter(item=>item.invoiceNo!==invoice.invoiceNo))};
+  const deleteInvoice=(invoice:Invoice)=>{if(payments.some(payment=>payment.invoiceNo===invoice.invoiceNo&&payment.advanceAmount)){setMessage('This invoice has an applied advance. Retain its payment history or use the sale return flow.');return;}if(commerce?.managedInvoice(invoice.invoiceNo)){setTab('quick');setMessage('Use Cancel bill or Full Return. Linked stock history must be retained.');return;}if(payments.some(payment=>payment.invoiceNo===invoice.invoiceNo)){setMessage('Delete invoice payments before deleting this invoice.');return}if(window.confirm(`Delete invoice ${invoice.invoiceNo}?`))setInvoices(current=>current.filter(item=>item.invoiceNo!==invoice.invoiceNo))};
   const [collectionType, setCollectionType] = useState<'invoice' | 'advance'>('invoice');
   const [selectedInvoiceNo, setSelectedInvoiceNo] = useState<string>('all');
 
   useEffect(()=>{setUsePaymentAdvance(false);setPaymentAdvance(0);},[paymentForm.invoiceNo]);
-  const paymentAdvanceAvailable=selectedPaymentInvoice&&schools.some(school=>school.name===selectedPaymentInvoice.customer)?availableSchoolAdvances(selectedPaymentInvoice.customer,schoolCollections,payments,paymentForm.date).reduce((sum,row)=>sum+row.available,0):0;
+  const paymentAdvanceOwner=selectedPaymentInvoice&&(commerce?.ledger.find(sale=>sale.invoice.invoiceNo===selectedPaymentInvoice.invoiceNo)?.lines[0]?.owner==='customer'||customers.some(customer=>customer[1]===selectedPaymentInvoice.customer)&&!schools.some(school=>school.name===selectedPaymentInvoice.customer))?'customer':'school';
+  const paymentAdvanceAvailable=selectedPaymentInvoice?availableSchoolAdvances(selectedPaymentInvoice.customer,paymentAdvanceOwner==='customer'?(commerce?.customerAdvances||[]):schoolCollections,payments,paymentForm.date).reduce((sum,row)=>sum+row.available,0):0;
   const paymentAdvanceApplied=usePaymentAdvance?paymentAdvance:0;
   const addPayment=()=>{
     const invoice=selectedPaymentInvoice;
@@ -599,8 +600,8 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
     const newPaid = paidFor(invoice.invoiceNo) + amountVal + discountVal;
     try {
       if(paymentAdvanceApplied){
-        if(!commerce)throw Error('School advance settlement is unavailable.');
-        const saved=commerce.recordAdvancePayment(payment);
+        if(!commerce)throw Error('Advance settlement is unavailable.');
+        const saved=commerce.recordAdvancePayment(payment,paymentAdvanceOwner);
         payment.advanceSources=saved.advanceSources;
       }else setPayments(current => [payment, ...current]);
     }catch(error){setMessage(error instanceof Error?error.message:'Unable to apply advance.');return;}
@@ -1027,7 +1028,7 @@ export function BillingPaymentsPage({company,customers,schools,students,navParam
               </label>
             </div>
 
-            {selectedPaymentInvoice&&schools.some(school=>school.name===selectedPaymentInvoice.customer)&&<section className="school-advance-panel"><strong>Available school advance {money(paymentAdvanceAvailable)}</strong><label className="explicit-discount-toggle"><input type="checkbox" checked={usePaymentAdvance} onChange={event=>{setUsePaymentAdvance(event.target.checked);setPaymentAdvance(0);}}/> Use advance</label>{usePaymentAdvance&&<div><label>Advance to apply<input type="number" min="0" step="0.01" value={paymentAdvance} onChange={event=>setPaymentAdvance(Number(event.target.value))}/></label><button className="outline" onClick={()=>setPaymentAdvance(Math.max(0,Math.min(paymentAdvanceAvailable,selectedPaymentInvoice.totalAmount-paidFor(selectedPaymentInvoice.invoiceNo)-paymentForm.amount-(paymentDiscountEnabled?paymentForm.discount:0))))}>Apply maximum</button><span>Advance remaining <b>{money(Math.max(0,paymentAdvanceAvailable-paymentAdvanceApplied))}</b></span></div>}</section>}
+            {selectedPaymentInvoice&&(paymentAdvanceOwner==='customer'||schools.some(school=>school.name===selectedPaymentInvoice.customer))&&<section className="school-advance-panel"><strong>Available {paymentAdvanceOwner} advance {money(paymentAdvanceAvailable)}</strong><label className="explicit-discount-toggle"><input type="checkbox" checked={usePaymentAdvance} onChange={event=>{setUsePaymentAdvance(event.target.checked);setPaymentAdvance(0);}}/> Use advance</label>{usePaymentAdvance&&<div><label>Advance to apply<input type="number" min="0" step="0.01" value={paymentAdvance} onChange={event=>setPaymentAdvance(Number(event.target.value))}/></label><button className="outline" onClick={()=>setPaymentAdvance(Math.max(0,Math.min(paymentAdvanceAvailable,selectedPaymentInvoice.totalAmount-paidFor(selectedPaymentInvoice.invoiceNo)-paymentForm.amount-(paymentDiscountEnabled?paymentForm.discount:0))))}>Apply maximum</button><span>Advance remaining <b>{money(Math.max(0,paymentAdvanceAvailable-paymentAdvanceApplied))}</b></span></div>}</section>}
             <div className="form-actions">
               {selectedPaymentInvoice&&<div className="payment-entry-breakdown"><span>Billed <b>{money(selectedPaymentInvoice.totalAmount)}</b></span><span>Already paid <b>{money(payments.filter(p=>p.invoiceNo===selectedPaymentInvoice.invoiceNo).reduce((sum,p)=>sum+p.amount,0))}</b></span><span>Current pending <b>{money(Math.max(0,selectedPaymentInvoice.totalAmount-paidFor(selectedPaymentInvoice.invoiceNo)))}</b></span><span>Advance applied <b>{money(paymentAdvanceApplied)}</b></span><span>Paying now <b>{money(paymentForm.amount)}</b></span><span>Remaining after payment <b>{money(Math.max(0,selectedPaymentInvoice.totalAmount-paidFor(selectedPaymentInvoice.invoiceNo)-paymentForm.amount-paymentAdvanceApplied-(paymentDiscountEnabled?paymentForm.discount:0)))}</b></span></div>}
               <button className="primary" onClick={addPayment}>

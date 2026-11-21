@@ -25,6 +25,6 @@ export function allocateSchoolAdvance(school:string, amount:number, collections:
     if (applied > 0) sources.push({receipt:receipt.receipt, amount:applied / 100});
     remaining -= applied;
   }
-  if (remaining > 0) throw Error('The available school advance has changed. Reduce the advance amount and try again.');
+  if (remaining > 0) throw Error('The available advance has changed. Reduce the advance amount and try again.');
   return sources;
 }

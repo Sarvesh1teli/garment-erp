@@ -1937,3 +1937,92 @@ body{font-size:15px;background:#eef5f2;font-family:'DM Sans',system-ui,-apple-sy
   .daily-work-entry-panel .work-job-fields,
   .daily-work-entry-panel .advance-form { grid-template-columns: minmax(0, 1fr); }
 }
+
+.job-stage-setup {
+  margin: 18px 0;
+  padding: 14px;
+  background: #f3f8ff;
+  border: 1px solid #ccdced;
+  border-radius: 8px;
+}
+.job-stage-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.job-stage-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+.job-stage-setup p {
+  margin: 8px 0 12px;
+  font-size: 12px;
+  color: #526779;
+}
+.job-stage-tabs { margin-top: 12px; }
+
+.job-dialog-overlay:has(.job-finishing-entry) { z-index: 15010; }
+.job-dialog > .outline + .primary { margin-left: 8px; }
+.job-stage-setup .job-operation-entry .readonly-field { padding: 9px 10px; }
+
+.job-quality-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; }
+.job-quality-note { font-size: 12px; line-height: 1.6; color: #526779; margin: 12px 0; }
+.job-quality-toggle { margin-top: 12px; }
+.job-dialog-overlay:has(.job-inspection-entry) { z-index: 15020; }
+.job-dialog-overlay:has(.job-inspection-entry) > .job-dialog { max-width: 700px; }
+.job-quality-panel .metrics { margin-top: 14px; }
+
+.job-ready-transfer-panel { border-top: 1px solid #dce6ed; padding-top: 16px; margin-top: 18px; }
+.job-dialog-overlay:has(.job-ready-transfer-entry) { z-index: 15020; }
+.job-dialog-overlay:has(.job-ready-transfer-entry) > .job-dialog { max-width: 700px; }
+
+.fabric-rate-dialog { max-width: 700px; }
+.job-dialog-overlay:has(.job-fabric-entry) { z-index: 15020; }
+.job-dialog-overlay:has(.job-fabric-entry) > .job-dialog { max-width: 750px; }
+.job-fabric-entry > label { display: grid; gap: 6px; font-size: 12px; }
+.job-fabric-entry > label input { padding: 10px; border: 1px solid #c6d5db; border-radius: 7px; }
+.job-fabric-summary .job-detail-meta { background: white; }
+
+.job-material-panel { border-top: 1px solid #dce6ed; padding-top: 14px; margin: 18px 0; }
+.job-material-overlay { z-index: 15020; }
+.job-material-entry { max-width: 750px; }
+
+.job-dialog-overlay:has(.job-progress-correction) { z-index: 15020; }
+.job-dialog-overlay:has(.job-progress-correction) > .job-dialog { max-width: 700px; }
+
+.job-order-source { border: 1px solid #cbdced; border-radius: 10px; padding: 16px; margin-bottom: 16px; background: #f5f9ff; }
+.customer-order-lines .quick-sale-line { grid-template-columns: minmax(100px,1fr) minmax(130px,1.4fr) minmax(65px,.65fr) minmax(100px,1fr) minmax(70px,.7fr) minmax(100px,1fr); }
+.customer-order-dialog { max-width: 1000px; }
+@media(max-width:800px) { .customer-order-lines .quick-sale-line { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+
+.customer-overview{display:grid;gap:16px;min-width:0}.customer-overview-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}.customer-overview-heading p{margin:6px 0 0;color:#607586}.customer-overview .customer-school-tabs{overflow-x:auto;flex-wrap:wrap}.customer-overview>.card{padding:20px}.customer-overview .table-card{padding:0}@media(max-width:700px){.customer-overview-heading{align-items:flex-start;flex-direction:column}}
+
+.wage-master-subtabs.segmented-pill-tabs{display:flex;flex-wrap:wrap;gap:4px;padding:5px;height:auto}.wage-master-subtabs.segmented-pill-tabs>button{flex:1 1 145px;min-width:0;gap:6px;white-space:nowrap;padding:10px 8px}.wage-master-subtabs.segmented-pill-tabs>button span{flex:0 1 auto}.wage-master-subtabs.segmented-pill-tabs .subtab-count{flex:none;margin:0;font-size:10px}
+
+.bom-master{display:grid;gap:16px;min-width:0}
+.bom-modal-overlay{position:fixed;inset:0;z-index:15000;display:flex;align-items:center;justify-content:center;padding:24px;overflow:auto}
+.bom-template-modal{width:min(1000px,100%);max-height:calc(100dvh - 48px);overflow-y:auto;margin:auto;flex-shrink:0}
+.bom-template-fields{display:grid;grid-template-columns:1.4fr 1.2fr 1fr .7fr;gap:14px;margin-bottom:20px}
+.bom-template-fields label,.bom-material-row label{display:flex;flex-direction:column;gap:7px;min-width:0;font-size:12px}
+.bom-template-fields input,.bom-template-fields select,.bom-material-row input,.bom-material-row select{width:100%;height:40px;box-sizing:border-box;font:inherit}
+.bom-material-row{display:grid;grid-template-columns:minmax(0,2fr) minmax(110px,1fr) auto;align-items:end;gap:14px;margin-bottom:12px}
+@media(max-width:700px){.bom-template-fields{grid-template-columns:repeat(2,minmax(0,1fr))}.bom-modal-overlay{padding:16px}.bom-material-row{grid-template-columns:minmax(0,1fr) 100px}.bom-material-row>button{grid-column:2}}
+
+.bom-menu-backdrop{position:fixed;inset:0;z-index:16000;background:transparent}.bom-action-menu{display:block;max-height:calc(100vh - 16px);overflow:auto}
+
+.purchase-view-button{display:inline-flex;align-items:center;justify-content:center;white-space:nowrap;min-width:92px;padding:7px 10px;border:1px solid #2563eb;background:#eff6ff;color:#1d4ed8;border-radius:8px;font-family:inherit;font-size:12px;font-weight:600}.purchase-history .jobs{min-width:0}.purchase-history th,.purchase-history td{padding-left:9px;padding-right:9px}
+
+.purchase-history .module-table{max-width:100%;overflow:hidden}.purchase-history .table-scroll-region{max-width:100%;overflow-x:auto}.purchase-history td:last-child{width:108px;white-space:nowrap}.purchase-history .purchase-view-button{white-space:nowrap!important}
+
+.job-guidance{margin:16px 0 20px;border:1px solid #d5e2ee;border-radius:12px;overflow:hidden;background:#fff}
+.job-guidance-summary{display:flex;flex-wrap:wrap;gap:12px;background:#edf4ff;padding:14px 16px}
+.job-guidance-summary>div{flex:1;min-width:140px;display:grid;gap:4px}.job-guidance-summary span{font-size:11px;color:#506782}.job-guidance-summary strong{font-size:18px;color:#184d98}
+.job-guidance-rows{padding:4px 16px}.job-guidance-row{--stage-colour:#2563eb;display:grid;grid-template-columns:minmax(0,1fr) minmax(180px,.7fr);align-items:center;gap:24px;padding:12px 0;border-bottom:1px solid #edf1f5}.job-guidance-row:last-child{border-bottom:0}.job-guidance-row.cutting{--stage-colour:#e59a00}.job-guidance-row.finishing{--stage-colour:#8b5cf6}.job-guidance-row.quality{--stage-colour:#0891b2}.job-guidance-row.ready,.job-guidance-row.is-complete{--stage-colour:#059669}
+.job-guidance-stage{display:grid;grid-template-columns:1fr auto;gap:7px;font-size:12px}.job-guidance-stage>span{color:#607086}.job-guidance-track{grid-column:1/-1;height:7px;border-radius:6px;background:#eaf0f5;overflow:hidden}.job-guidance-track>div{height:100%;background:var(--stage-colour);border-radius:6px}
+.job-guidance-action{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:6px}.job-guidance-action small{font-size:11px;color:#607086}.job-guidance-action button{background:var(--stage-colour);color:white;border:0;border-radius:7px;padding:8px 11px;font-size:12px;font-weight:600;white-space:nowrap}.job-guidance-action button.job-guidance-rework{background:#fff3df;color:#92400e;border:1px solid #f3cf94}.job-guidance-done{color:#047857;background:#e8f7ef;border-radius:20px;font-size:11px;padding:5px 9px}.job-guidance-note{margin:0!important;padding:10px 16px;background:#f7faff;color:#62748a;font-size:11px}
+@media(max-width:650px){.job-guidance-row{grid-template-columns:1fr;gap:10px}.job-guidance-action{justify-content:flex-start}.job-guidance-summary strong{font-size:16px}}
+
+.production-order-table{min-width:0;max-width:100%}.production-order-table .module-table{min-width:0;overflow:hidden}.production-order-table table{width:100%;min-width:1050px}.production-order-table th:last-child,.production-order-table td:last-child{position:sticky;right:0;z-index:2;background:#fff;min-width:190px;box-shadow:-5px 0 8px -7px #456078}.production-order-table th:last-child{background:#e2e8f0;z-index:3}.production-order-table th:nth-child(-n+3),.production-order-table td:nth-child(-n+3){white-space:nowrap}.production-order-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:nowrap}.production-order-actions>button{white-space:nowrap;padding:7px 10px;font-size:11px}.production-order-more{font-size:20px!important;line-height:1;min-width:32px}.production-menu-backdrop{position:fixed;inset:0;z-index:16000;background:transparent}.production-order-menu{display:block;max-height:calc(100dvh - 16px);overflow:auto}@media(max-width:900px){.production-order-table th:nth-child(3),.production-order-table td:nth-child(3){display:none}.production-order-table table{min-width:950px}}

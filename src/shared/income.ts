@@ -14,8 +14,8 @@ export function cashInvoicePayments(payments:InvoicePayment[], collections:strin
   );
 }
 
-export function buildIncomeEntries(invoices:Invoice[], payments:InvoicePayment[], collections:string[][]):IncomeEntry[] {
-  const invoiceEntries=cashInvoicePayments(payments,collections).map(payment=>({
+export function buildIncomeEntries(invoices:Invoice[], payments:InvoicePayment[], collections:string[][],customerAdvances:string[][]=[]):IncomeEntry[] {
+  const invoiceEntries=cashInvoicePayments(payments,[...collections,...customerAdvances]).map(payment=>({
     date:payment.date,type:'Invoice Payment',ref:payment.invoiceNo,party:payment.customer,
     description:invoices.find(invoice=>invoice.invoiceNo===payment.invoiceNo)?.product||'Invoice payment',
     mode:payment.mode,amount:Number(payment.amount)
@@ -25,5 +25,6 @@ export function buildIncomeEntries(invoices:Invoice[], payments:InvoicePayment[]
     description:row[5]&&row[5]!=='-'?row[5]:'School collection',mode:row[3],
     amount:Number((String(row[4]||'').match(/\d[\d,]*(?:\.\d+)?/)?.[0]||'0').replace(/,/g,''))
   })).filter(row=>row.amount>0);
-  return [...invoiceEntries,...schoolEntries];
+  const customerEntries=customerAdvances.map(row=>({date:row[1],type:'Customer Advance',ref:row[0],party:row[2],description:row[5]||'Customer advance deposit',mode:row[3],amount:Number(row[4])})).filter(row=>row.amount>0);
+  return [...invoiceEntries,...schoolEntries,...customerEntries];
 }
